@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>Taller · Control de vehículos</title>
+<link rel="icon" href="data:," />
+<!-- Etiquetas para que, cuando el archivo esté alojado en una web (https),
+     se pueda instalar en la pantalla de inicio y se abra sin la barra de
+     direcciones del navegador (como una app). En un archivo local (content://
+     o file://) el sistema operativo no ofrece esta opción; solo funciona
+     una vez subido a un hosting con https. -->
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Taller" />
+<meta name="theme-color" content="#1c1917" />
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Taller%20%C2%B7%20Control%20de%20veh%C3%ADculos%22%2C%22short_name%22%3A%22Taller%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f5f5f4%22%2C%22theme_color%22%3A%22%231c1917%22%2C%22icons%22%3A%5B%5D%7D" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1?target=es2022",
+    "react-dom": "https://esm.sh/react-dom@18.3.1?target=es2022",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?target=es2022",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?external=react&target=es2022",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js"
+  }
+}
+</script>
+<style>
+  html, body { margin: 0; padding: 0; background: #f5f5f4; overscroll-behavior-y: contain; }
+  html, body, button, input, textarea, select {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { -webkit-tap-highlight-color: transparent; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-type="module" data-presets="react">
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
+import {
+  User, Car, Phone, Gauge, Camera, X, Plus, Check, Package,
+  Wrench, ClipboardList, ChevronLeft, Trash2, Edit3, Clock,
+  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2
+} from "lucide-react";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs
+} from "firebase/firestore";
+import {
+  initializeAuth, inMemoryPersistence, signInAnonymously, onAuthStateChanged
+} from "firebase/auth";
+
+/* ---------------------------------------------------------
+   Configuración de Firebase
+   Pega aquí el objeto firebaseConfig que te da la consola de
+   Firebase (Configuración del proyecto > Tus apps > Web).
+   Mientras esté sin rellenar, la app usa localStorage (solo
+   este dispositivo) para no romperse.
+--------------------------------------------------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyDjuhFdXuYFR8vC6qB5i0zXCJ616Pp7Mkk",
+  authDomain: "taller-app-6fcbe.firebaseapp.com",
+  projectId: "taller-app-6fcbe",
+  storageBucket: "taller-app-6fcbe.firebasestorage.app",
+  messagingSenderId: "269971019729",
+  appId: "1:269971019729:web:c15713f8f6c07c4d4172f0",
+};
+
+const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "TU_API_KEY";
+
+/* ---------------------------------------------------------
+   Almacenamiento: localStorage (solo este dispositivo)
+--------------------------------------------------------- */
+const LS_PREFIX = "workshop-app:";
+
+const localStorageAPI = {
+  async get(key) {
+    const raw = window.localStorage.getItem(LS_PREFIX + key);
+    if (raw === null) return null;
+    return { key, value: raw };
+  },
+  async set(key, value) {
+    window.localStorage.setItem(LS_PREFIX + key, value);
+    return { key, value };
+  },
+  async delete(key) {
+    window.localStorage.removeItem(LS_PREFIX + key);
+    return { key, deleted: true };
+  },
+  async list(prefix) {
+    const keys = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(LS_PREFIX)) {
+        const short = k.slice(LS_PREFIX.length);
+        if (!prefix || short.startsWith(prefix)) keys.push(short);
+      }
+    }
+    return { keys };
+  }
+};
+
+/* ---------------------------------------------------------
+   Almacenamiento: Firestore (compartido entre dispositivos)
+   Usa autenticación anónima: cada dispositivo entra sin
+   pedir usuario/contraseña, pero queda autenticado, para que
+   las reglas de Firestore puedan exigir "if request.auth != null".
+--------------------------------------------------------- */
+const FS_COLLECTION = "workshop_data";
+let firestoreAPI = null;
+
+if (FIREBASE_CONFIGURED) {
+  const firebaseApp = initializeApp(firebaseConfig);
+  const db = getFirestore(firebaseApp);
+  // inMemoryPersistence evita depender de IndexedDB, que en algunos
+  // navegadores móviles se bloquea o cuelga silenciosamente. Como el
+  // login es anónimo y las reglas solo exigen "estar autenticado",
+  // no pasa nada por re-autenticar en cada carga de página.
+  const auth = initializeAuth(firebaseApp, { persistence: inMemoryPersistence });
+
+  const authReady = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      const online = typeof navigator !== "undefined" ? navigator.onLine : "desconocido";
+      reject(new Error(
+        `Tiempo de espera agotado iniciando sesión en Firebase (conexión: ${online}). Revisa la red o que el inicio de sesión anónimo esté activado en Firebase.`
+      ));
+    }, 15000);
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        clearTimeout(timeout);
+        resolve(user);
+      }
+    });
+    signInAnonymously(auth).catch((err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+
+  firestoreAPI = {
+    async get(key) {
+      await authReady;
+      const snap = await getDoc(doc(db, FS_COLLECTION, key));
+      if (!snap.exists()) return null;
+      return { key, value: snap.data().value };
+    },
+    async set(key, value) {
+      await authReady;
+      await setDoc(doc(db, FS_COLLECTION, key), { value, updatedAt: Date.now() });
+      return { key, value };
+    },
+    async delete(key) {
+      await authReady;
+      await deleteDoc(doc(db, FS_COLLECTION, key));
+      return { key, deleted: true };
+    },
+    async list(prefix) {
+      await authReady;
+      const snap = await getDocs(collection(db, FS_COLLECTION));
+      const keys = [];
+      snap.forEach((d) => {
+        if (!prefix || d.id.startsWith(prefix)) keys.push(d.id);
+      });
+      return { keys };
+    }
+  };
+}
+
+window.storage = firestoreAPI || localStorageAPI;
+
+/* ---------------------------------------------------------
+   Utilidades de almacenamiento
+--------------------------------------------------------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+async function storageGet(key) {
+  try {
+    const r = await window.storage.get(key);
+    return r ? JSON.parse(r.value) : null;
+  } catch {
+    return null;
+  }
+}
+async function storageSet(key, value) {
+  await window.storage.set(key, JSON.stringify(value));
+  return true;
+}
+
+/* ---------------------------------------------------------
+   Compresión de imágenes a base64
+--------------------------------------------------------- */
+function fileToCompressedDataUrl(file, maxDim = 1000, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------------------------------------------------
+   Componente: subida de foto
+--------------------------------------------------------- */
+function PhotoPicker({ onPick, label = "Añadir foto", small }) {
+  const cameraRef = useRef(null);
+  const galleryRef = useRef(null);
+  const btnRef = useRef(null);
+  const [loading, setLoading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+
+  const handleChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    try {
+      const dataUrl = await fileToCompressedDataUrl(file);
+      onPick(dataUrl);
+    } finally {
+      setLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  const MENU_WIDTH = 160; // w-40
+
+  const openMenu = () => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      let left = rect.left;
+      // Evita que el menú se salga por la derecha de la pantalla
+      if (left + MENU_WIDTH > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - MENU_WIDTH - 8);
+      }
+      let top = rect.bottom + 4;
+      const MENU_HEIGHT = 88; // altura aproximada del menú (2 opciones)
+      // Si no cabe debajo, lo abre hacia arriba
+      if (top + MENU_HEIGHT > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - MENU_HEIGHT - 4);
+      }
+      setMenuPos({ top, left });
+    }
+    setMenuOpen(true);
+  };
+
+  const btnClass = `inline-flex items-center gap-1.5 rounded-md border border-stone-300 bg-white font-medium text-stone-700 hover:bg-stone-50 active:scale-[0.98] transition ${
+    small ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm"
+  }`;
+
+  return (
+    <div className="inline-block">
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleChange}
+        style={{ display: "none" }}
+      />
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        onChange={handleChange}
+        style={{ display: "none" }}
+      />
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
+        disabled={loading}
+        className={btnClass}
+      >
+        <Camera size={small ? 14 : 16} />
+        {loading ? "Cargando..." : label}
+      </button>
+
+      {menuOpen && !loading && createPortal(
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+          <div
+            className="fixed z-50 bg-white rounded-lg border border-stone-200 shadow-lg overflow-hidden w-40"
+            style={{ top: menuPos.top, left: menuPos.left }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                cameraRef.current?.click();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 text-left"
+            >
+              <Camera size={14} /> Hacer foto
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                galleryRef.current?.click();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 text-left border-t border-stone-100"
+            >
+              <Package size={14} /> Elegir de galería
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Componente: visor de foto ampliada (lightbox simple)
+--------------------------------------------------------- */
+function ImageLightbox({ src, onClose }) {
+  if (!src) return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <img src={src} alt="" className="max-w-full max-h-full rounded-lg" />
+      <button
+        className="absolute top-4 right-4 text-white bg-white/10 rounded-full p-2"
+        onClick={onClose}
+      >
+        <X size={20} />
+      </button>
+    </div>,
+    document.body
+  );
+}
+
+/* ---------------------------------------------------------
+   Componente: galería de fotos con opción de eliminar
+--------------------------------------------------------- */
+function PhotoGallery({ photos, onDelete, onAdd }) {
+  const [viewerIdx, setViewerIdx] = useState(null);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        {photos.map((p, i) => (
+          <div key={p.id} className="relative group">
+            <img
+              src={p.data}
+              alt=""
+              onClick={() => setViewerIdx(i)}
+              className="w-16 h-16 object-cover rounded-md border border-stone-300 cursor-pointer"
+            />
+            <button
+              onClick={() => onDelete(p.id)}
+              aria-label="Eliminar foto"
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ))}
+        {onAdd && (
+          <div className="w-16 h-16 flex items-center justify-center">
+            <PhotoPicker onPick={onAdd} label="" small />
+          </div>
+        )}
+      </div>
+      {viewerIdx !== null && (
+        <ImageLightbox src={photos[viewerIdx].data} onClose={() => setViewerIdx(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Hook: pull-to-refresh (arrastrar hacia abajo para recargar)
+   Detecta un gesto táctil de arrastre hacia abajo cuando la
+   página está en la parte superior, y llama a onRefresh().
+--------------------------------------------------------- */
+function usePullToRefresh(onRefresh, enabled = true) {
+  const [pullDistance, setPullDistance] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const startYRef = useRef(null);
+  const refreshingRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const handleTouchStart = (e) => {
+      if (refreshingRef.current) return;
+      startYRef.current = window.scrollY <= 0 ? e.touches[0].clientY : null;
+    };
+    const handleTouchMove = (e) => {
+      if (startYRef.current === null || refreshingRef.current) return;
+      const distance = e.touches[0].clientY - startYRef.current;
+      if (distance > 0 && window.scrollY <= 0) {
+        setPullDistance(Math.min(distance * 0.5, 80));
+      } else {
+        setPullDistance(0);
+      }
+    };
+    const handleTouchEnd = () => {
+      if (startYRef.current === null) return;
+      startYRef.current = null;
+      setPullDistance((current) => {
+        if (current > 50 && !refreshingRef.current) {
+          refreshingRef.current = true;
+          setRefreshing(true);
+          Promise.resolve(onRefresh()).finally(() => {
+            refreshingRef.current = false;
+            setRefreshing(false);
+          });
+        }
+        return 0;
+      });
+    };
+
+    document.addEventListener("touchstart", handleTouchStart, { passive: true });
+    document.addEventListener("touchmove", handleTouchMove, { passive: true });
+    document.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [enabled, onRefresh]);
+
+  return { pullDistance, refreshing };
+}
+
+/* ---------------------------------------------------------
+   Estado de pieza
+--------------------------------------------------------- */
+const PART_STATES = {
+  pedir: { label: "Pedir", color: "bg-red-100 text-red-800 border-red-300", dot: "bg-red-500" },
+  pedido: { label: "Pedido", color: "bg-amber-100 text-amber-800 border-amber-300", dot: "bg-amber-500" },
+  recibido: { label: "Recibido", color: "bg-green-100 text-green-800 border-green-300", dot: "bg-green-500" },
+  recambio: { label: "Recambio", color: "bg-blue-100 text-blue-800 border-blue-300", dot: "bg-blue-500" },
+};
+
+/* ---------------------------------------------------------
+   Tarjeta de pieza individual
+--------------------------------------------------------- */
+const SUPPLIER_OPTIONS = ["Indalo", "A.R.Vera", "Ad Salas"];
+
+function PartCard({ part, onUpdate, onDelete }) {
+  const isCustomSupplier = !!part.supplier && !SUPPLIER_OPTIONS.includes(part.supplier);
+  const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
+  const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? part.supplier : "");
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const state = PART_STATES[part.status];
+
+  return (
+    <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden">
+      <div className="p-3.5">
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0">
+            {part.photo ? (
+              <div className="relative">
+                <img
+                  src={part.photo.data}
+                  alt=""
+                  onClick={() => setViewerOpen(true)}
+                  className="w-24 h-24 object-cover rounded-md border border-stone-300 cursor-pointer"
+                />
+                <button
+                  onClick={() => onUpdate({ ...part, photo: null })}
+                  aria-label="Eliminar foto de la pieza"
+                  className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
+                >
+                  <X size={14} />
+                </button>
+                {viewerOpen && (
+                  <ImageLightbox src={part.photo.data} onClose={() => setViewerOpen(false)} />
+                )}
+              </div>
+            ) : (
+              <div className="w-24 h-24 flex items-center justify-center">
+                <PhotoPicker
+                  small
+                  label=""
+                  onPick={(data) => onUpdate({ ...part, photo: { id: uid(), data } })}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <textarea
+              value={part.name}
+              onChange={(e) => onUpdate({ ...part, name: e.target.value.toUpperCase() })}
+              placeholder="NOMBRE DE LA PIEZA"
+              rows={1}
+              onInput={(e) => {
+                e.target.style.height = "auto";
+                e.target.style.height = e.target.scrollHeight + "px";
+              }}
+              className="w-full text-base font-bold text-black uppercase border-none outline-none bg-transparent placeholder-stone-400 mb-2 resize-none overflow-hidden break-words"
+            />
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(PART_STATES).map(([key, s]) => (
+                <button
+                  key={key}
+                  onClick={() => onUpdate({ ...part, status: key })}
+                  className={`text-sm px-3 py-1.5 rounded-full border-2 font-bold uppercase transition ${
+                    part.status === key ? s.color : "bg-stone-50 text-black border-stone-200"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {(part.status === "pedido" || part.status === "recibido") && (
+              <div className="mt-2.5 space-y-1.5">
+                <select
+                  value={showCustomSupplier ? "Otro" : (part.supplier || "")}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "Otro") {
+                      setShowCustomSupplier(true);
+                      onUpdate({ ...part, supplier: customSupplier });
+                    } else {
+                      setShowCustomSupplier(false);
+                      onUpdate({ ...part, supplier: val });
+                    }
+                  }}
+                  className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium bg-white"
+                >
+                  <option value="">PEDIDO EN...</option>
+                  {SUPPLIER_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt.toUpperCase()}
+                    </option>
+                  ))}
+                  <option value="Otro">OTRO:</option>
+                </select>
+                {showCustomSupplier && (
+                  <input
+                    autoFocus
+                    value={customSupplier}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setCustomSupplier(val);
+                      onUpdate({ ...part, supplier: val });
+                    }}
+                    placeholder="ESCRIBE EL PROVEEDOR"
+                    className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => onDelete(part.id)}
+            aria-label="Eliminar pieza"
+            className="text-black hover:text-red-500 flex-shrink-0 p-1.5"
+          >
+            <Trash2 size={20} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Pantalla de detalle de vehículo
+--------------------------------------------------------- */
+function CarDetail({ car, onBack, onUpdate, onDelete }) {
+  const [localCar, setLocalCar] = useState(car);
+  const carRef = useRef(car);
+  const onUpdateRef = useRef(onUpdate);
+
+  useEffect(() => setLocalCar(car), [car.id]);
+  useEffect(() => {
+    carRef.current = localCar;
+  }, [localCar]);
+  useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
+
+  const patch = useCallback(
+    (fields) => {
+      const updated = { ...localCar, ...fields, updatedAt: Date.now() };
+      setLocalCar(updated);
+      onUpdate(updated);
+    },
+    [localCar, onUpdate]
+  );
+
+  const addPart = () => {
+    patch({
+      parts: [
+        ...localCar.parts,
+        { id: uid(), name: "", status: "pedir", supplier: "", photo: null },
+      ],
+    });
+  };
+  const updatePart = (part) => {
+    patch({ parts: localCar.parts.map((p) => (p.id === part.id ? part : p)) });
+  };
+  const deletePart = (id) => {
+    patch({ parts: localCar.parts.filter((p) => p.id !== id) });
+  };
+
+  const addPhoto = (data) => {
+    patch({ photos: [...localCar.photos, { id: uid(), data }] });
+  };
+  const deletePhoto = (id) => {
+    patch({ photos: localCar.photos.filter((p) => p.id !== id) });
+  };
+
+  const addClientPhoto = (data) => {
+    patch({ clientPhotos: [...(localCar.clientPhotos || []), { id: uid(), data }] });
+  };
+  const deleteClientPhoto = (id) => {
+    patch({ clientPhotos: (localCar.clientPhotos || []).filter((p) => p.id !== id) });
+  };
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div className="min-h-screen bg-stone-100">
+      <div className="sticky top-0 z-10 bg-stone-900 text-white px-4 py-3 flex items-center gap-3 shadow">
+        <button onClick={onBack} aria-label="Volver">
+          <ChevronLeft size={22} />
+        </button>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold truncate uppercase">
+            {localCar.brand} {localCar.model || ""}
+          </p>
+          <p className="text-xs text-white/80 tracking-wide uppercase">{localCar.plate}</p>
+        </div>
+        {localCar.status === "terminado" ? (
+          <span className="flex items-center gap-1 text-xs font-medium bg-green-500/20 text-green-300 px-2.5 py-1 rounded-full border border-green-500/30 uppercase">
+            <CheckCircle2 size={13} /> Terminado
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-xs font-medium bg-amber-500/20 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/30 uppercase">
+            <Clock size={13} /> Pendiente
+          </span>
+        )}
+      </div>
+
+      <div className="p-4 space-y-4 max-w-lg mx-auto">
+        <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
+          <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3">
+            Mecánico
+          </h2>
+          <select
+            value={localCar.mechanic || ""}
+            onChange={(e) => patch({ mechanic: e.target.value })}
+            className="w-full px-3 py-3 text-base font-bold text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500 bg-white"
+          >
+            <option value="">SIN ASIGNAR</option>
+            <option value="Francisco">FRANCISCO</option>
+            <option value="Alfonso">ALFONSO</option>
+            <option value="Ginés">GINÉS</option>
+            <option value="Ramón">RAMÓN</option>
+          </select>
+        </section>
+
+        <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
+          <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3">
+            Vehículo
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-semibold text-black">Marca</label>
+              <input
+                value={localCar.brand}
+                onChange={(e) => patch({ brand: e.target.value.toUpperCase() })}
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-black">Modelo</label>
+              <input
+                value={localCar.model}
+                onChange={(e) => patch({ model: e.target.value.toUpperCase() })}
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-black">Matrícula</label>
+              <input
+                value={localCar.plate}
+                onChange={(e) => patch({ plate: e.target.value.toUpperCase() })}
+                className="w-full mt-1 px-3 py-3 text-base font-bold text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-black flex items-center gap-1">
+                <Gauge size={14} /> Kilómetros
+              </label>
+              <input
+                type="number"
+                value={localCar.km}
+                onChange={(e) => patch({ km: e.target.value })}
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <h3 className="text-sm font-semibold text-black mb-2">Fotos del vehículo</h3>
+            <PhotoGallery photos={localCar.photos} onDelete={deletePhoto} onAdd={addPhoto} />
+          </div>
+        </section>
+
+        <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
+          <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3">
+            Cliente
+          </h2>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-semibold text-black flex items-center gap-1">
+                <User size={14} /> Nombre
+              </label>
+              <input
+                value={localCar.clientName}
+                onChange={(e) => patch({ clientName: e.target.value.toUpperCase() })}
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-black flex items-center gap-1">
+                <Phone size={14} /> Teléfono
+              </label>
+              <input
+                value={localCar.clientPhone}
+                onChange={(e) => patch({ clientPhone: e.target.value })}
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-black mb-2">Fotos del cliente</h3>
+              <PhotoGallery
+                photos={localCar.clientPhotos || []}
+                onDelete={deleteClientPhoto}
+                onAdd={addClientPhoto}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-black uppercase tracking-wide flex items-center gap-1.5">
+              <Package size={16} /> Piezas de recambio
+            </h2>
+            <button
+              onClick={addPart}
+              className="flex items-center gap-1.5 text-sm font-bold text-amber-700 bg-amber-50 border-2 border-amber-200 px-3 py-2 rounded-lg hover:bg-amber-100"
+            >
+              <Plus size={16} /> Añadir pieza
+            </button>
+          </div>
+          {localCar.parts.length === 0 ? (
+            <p className="text-base font-medium text-black text-center py-6">
+              Sin piezas registradas todavía.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {localCar.parts.map((part) => (
+                <PartCard
+                  key={part.id}
+                  part={part}
+                  onUpdate={updatePart}
+                  onDelete={deletePart}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
+          <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3 flex items-center gap-1.5">
+            <ClipboardList size={16} /> Mano de obra y trabajo realizado
+          </h2>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-sm font-semibold text-black">Horas estimadas</label>
+              <input
+                type="number"
+                step="0.5"
+                value={localCar.laborHours}
+                onChange={(e) => patch({ laborHours: e.target.value })}
+                placeholder="0"
+                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+          <textarea
+            value={localCar.notes}
+            onChange={(e) => patch({ notes: e.target.value.toUpperCase() })}
+            rows={5}
+            placeholder="DESCRIBE QUÉ SE HA HECHO AL VEHÍCULO..."
+            className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500 resize-none"
+          />
+        </section>
+
+        <div className="flex gap-2 pb-6">
+          {localCar.status !== "terminado" ? (
+            <button
+              onClick={() => patch({ status: "terminado", finishedAt: Date.now() })}
+              className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-green-600 text-white text-lg font-bold uppercase hover:bg-green-700 active:scale-[0.98] transition"
+            >
+              <Check size={20} /> Marcar como terminado
+            </button>
+          ) : (
+            <button
+              onClick={() => patch({ status: "pendiente", finishedAt: null })}
+              className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-lg font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
+            >
+              <Clock size={20} /> Reabrir vehículo
+            </button>
+          )}
+        </div>
+
+        {!confirmDelete ? (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="text-sm font-bold text-black hover:text-red-500 flex items-center gap-1.5 mx-auto mb-6 py-2 px-3"
+          >
+            <Trash2 size={16} /> Eliminar vehículo del taller
+          </button>
+        ) : (
+          <div className="text-center mb-6">
+            <p className="text-sm font-semibold text-black mb-2">
+              ¿Eliminar definitivamente esta ficha?
+            </p>
+            <div className="flex justify-center gap-2">
+              <button
+                onClick={() => onDelete(localCar.id)}
+                className="text-sm font-bold bg-red-600 text-white px-4 py-2.5 rounded-lg"
+              >
+                Sí, eliminar
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-sm font-bold bg-stone-200 text-stone-700 px-4 py-2.5 rounded-lg"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Tarjeta resumen de vehículo (lista)
+--------------------------------------------------------- */
+function CarListItem({ car, onOpen }) {
+  const partsToOrder = car.parts.filter((p) => p.status === "pedir").length;
+  const partsOrdered = car.parts.filter((p) => p.status === "pedido").length;
+
+  const thumb = car.photos && car.photos[0];
+
+  return (
+    <button
+      onClick={() => onOpen(car.id)}
+      className="w-full text-left bg-white rounded-xl border border-stone-200 overflow-hidden hover:border-stone-300 active:scale-[0.99] transition"
+    >
+      <div className="relative w-full h-48 bg-stone-100">
+        {thumb ? (
+          <img src={thumb.data} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-black">
+            <Car size={40} />
+          </div>
+        )}
+        <div className="absolute top-2 right-2">
+          {car.status === "terminado" ? (
+            <span className="flex items-center gap-1 text-[11px] font-bold uppercase bg-green-100 text-green-700 px-2 py-1 rounded-full shadow-sm">
+              <CheckCircle2 size={11} /> Terminado
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-[11px] font-bold uppercase bg-amber-100 text-amber-700 px-2 py-1 rounded-full shadow-sm">
+              <Clock size={11} /> Pendiente
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="p-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <User size={15} className="text-black flex-shrink-0" />
+            <p className="font-bold text-black uppercase truncate">
+              {car.clientName || "Sin nombre"}
+            </p>
+          </div>
+          {car.clientPhone && (
+            <p className="text-sm text-black mt-0.5 ml-[23px] flex items-center gap-1">
+              <Phone size={12} className="flex-shrink-0" /> {car.clientPhone}
+            </p>
+          )}
+          {(car.plate || car.brand || car.model || car.km) && (
+            <p className="text-sm text-black mt-1 ml-[23px] uppercase">
+              {[
+                car.plate || null,
+                [car.brand, car.model].filter(Boolean).join(" ") || null,
+                car.km ? `${car.km} km` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+        </div>
+        {(partsToOrder > 0 || partsOrdered > 0) && (
+          <div className="flex gap-2 mt-2.5 ml-[23px]">
+            {partsToOrder > 0 && (
+              <span className="text-[11px] font-bold uppercase bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">
+                {partsToOrder} por pedir
+              </span>
+            )}
+            {partsOrdered > 0 && (
+              <span className="text-[11px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
+                {partsOrdered} pedidas
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+/* ---------------------------------------------------------
+   Pantalla: lista / bandeja
+--------------------------------------------------------- */
+function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery }) {
+  const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+
+  useEffect(() => {
+    const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handleChange);
+    return () => document.removeEventListener("fullscreenchange", handleChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err) {
+      console.error("No se pudo cambiar el modo pantalla completa:", err);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setManualRefreshing(true);
+    await onRefresh();
+    setManualRefreshing(false);
+  };
+
+  const filtered = cars
+    .filter((c) => (filter === "pendiente" ? c.status !== "terminado" : c.status === "terminado"))
+    .filter((c) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return (
+        c.plate?.toLowerCase().includes(q) ||
+        c.brand?.toLowerCase().includes(q) ||
+        c.model?.toLowerCase().includes(q) ||
+        c.clientName?.toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const pendingCount = cars.filter((c) => c.status !== "terminado").length;
+  const doneCount = cars.filter((c) => c.status === "terminado").length;
+
+  const indicatorHeight = refreshing ? 44 : pullDistance;
+
+  return (
+    <div className="min-h-screen bg-stone-100">
+      <div
+        className="flex items-center justify-center overflow-hidden transition-[height] duration-150 ease-out bg-stone-100"
+        style={{ height: indicatorHeight }}
+      >
+        <RefreshCw
+          size={18}
+          className={`text-black ${refreshing ? "animate-spin" : ""}`}
+          style={!refreshing ? { transform: `rotate(${pullDistance * 3}deg)` } : undefined}
+        />
+      </div>
+      <div className="sticky top-0 z-10 bg-stone-900 text-white px-4 pt-4 pb-3 shadow">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
+              <Wrench size={16} className="text-stone-900" />
+            </div>
+            <div>
+              <p className="font-semibold leading-tight uppercase">Taller</p>
+              <p className="text-[11px] text-white/80 leading-tight flex items-center gap-1 uppercase">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full inline-block ${
+                    FIREBASE_CONFIGURED ? "bg-green-500" : "bg-amber-500"
+                  }`}
+                />
+                {FIREBASE_CONFIGURED ? "Sincronizado" : "Solo este dispositivo"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+              className="text-white"
+            >
+              {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </button>
+            <button
+              onClick={handleManualRefresh}
+              aria-label="Actualizar"
+              className="text-white"
+            >
+              <RefreshCw size={17} className={manualRefreshing ? "animate-spin" : ""} />
+            </button>
+          </div>
+        </div>
+
+        <div className="relative mb-3">
+          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/70" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="BUSCAR POR MATRÍCULA, MARCA O CLIENTE..."
+            className="w-full pl-8 pr-3 py-2 text-sm uppercase rounded-lg bg-stone-800 border border-stone-700 text-white placeholder-white/50 outline-none focus:border-amber-500"
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => setFilter("pendiente")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-bold uppercase transition ${
+              filter === "pendiente" ? "bg-amber-500 text-stone-900" : "bg-stone-800 text-white"
+            }`}
+          >
+            <Clock size={14} /> Pendientes ({pendingCount})
+          </button>
+          <button
+            onClick={() => setFilter("terminado")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-bold uppercase transition ${
+              filter === "terminado" ? "bg-green-500 text-stone-900" : "bg-stone-800 text-white"
+            }`}
+          >
+            <CheckCircle2 size={14} /> Terminados ({doneCount})
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 max-w-lg mx-auto">
+        <button
+          onClick={onCreate}
+          className="w-full flex items-center justify-center gap-2 py-3 mb-4 rounded-xl border-2 border-dashed border-stone-300 text-black font-bold uppercase hover:border-amber-400 hover:text-amber-600 transition"
+        >
+          <Plus size={18} /> Registrar nuevo vehículo
+        </button>
+
+        {filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <AlertCircle size={28} className="mx-auto text-black mb-2" />
+            <p className="text-sm font-medium text-black uppercase">
+              {query
+                ? "No hay vehículos que coincidan con la búsqueda."
+                : filter === "pendiente"
+                ? "No hay vehículos pendientes."
+                : "Todavía no hay vehículos terminados."}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {filtered.map((car) => (
+              <CarListItem key={car.id} car={car} onOpen={onOpen} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   App principal
+--------------------------------------------------------- */
+const CARS_INDEX_KEY = "workshop:cars:index";
+const carKey = (id) => `workshop:cars:${id}`;
+
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [cars, setCars] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  const [filter, setFilter] = useState("pendiente");
+  const [query, setQuery] = useState("");
+  const [saveStatus, setSaveStatus] = useState("idle");
+  const [saveError, setSaveError] = useState(null);
+  const [confirmExit, setConfirmExit] = useState(false);
+  const openIdRef = useRef(openId);
+
+  useEffect(() => {
+    openIdRef.current = openId;
+  }, [openId]);
+
+  // Gestión del botón "atrás" del navegador/móvil:
+  // - Si hay un vehículo abierto, "atrás" vuelve a la lista principal.
+  // - Si estamos en la lista principal, "atrás" pide confirmación antes de salir.
+  useEffect(() => {
+    // Estado base para poder interceptar el "atrás" incluso en la pantalla inicial.
+    window.history.pushState({ screen: "list" }, "");
+
+    const handlePopState = () => {
+      if (openIdRef.current) {
+        // Estábamos en el detalle: volvemos a la lista y reponemos el estado base.
+        setOpenId(null);
+        window.history.pushState({ screen: "list" }, "");
+      } else {
+        // Estábamos en la lista: preguntamos antes de salir.
+        setConfirmExit(true);
+        window.history.pushState({ screen: "list" }, "");
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const openCarDetail = (id) => {
+    window.history.pushState({ screen: "detail" }, "");
+    setOpenId(id);
+  };
+
+  const closeCarDetail = () => {
+    window.history.back();
+  };
+
+  const confirmExitApp = () => {
+    setConfirmExit(false);
+    // No hay forma fiable de "cerrar" la pestaña programáticamente,
+    // así que retrocedemos de verdad en el historial del navegador.
+    window.history.go(-2);
+  };
+
+  const loadData = async ({ silent } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
+    try {
+      const index = (await storageGet(CARS_INDEX_KEY)) || [];
+      const loaded = [];
+      for (const id of index) {
+        const c = await storageGet(carKey(id));
+        if (c) loaded.push(c);
+      }
+      setCars(loaded);
+      if (!silent) setLoading(false);
+    } catch (err) {
+      console.error("Error cargando datos:", err);
+      if (silent) {
+        setSaveStatus("error");
+        setSaveError((err && err.message) || String(err));
+      } else {
+        setLoadError((err && err.message) || String(err));
+        setLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleRefresh = useCallback(() => loadData({ silent: true }), []);
+
+  const persistIndex = async (list) => {
+    try {
+      await storageSet(
+        CARS_INDEX_KEY,
+        list.map((c) => c.id)
+      );
+    } catch (err) {
+      console.error("Error guardando índice:", err);
+      setSaveStatus("error");
+      setSaveError((err && err.message) || String(err));
+    }
+  };
+
+  const saveCar = async (car) => {
+    setSaveStatus("saving");
+    try {
+      await storageSet(carKey(car.id), car);
+      setSaveStatus("saved");
+      setSaveError(null);
+      setTimeout(() => setSaveStatus("idle"), 1200);
+    } catch (err) {
+      console.error("Error guardando coche:", err);
+      setSaveStatus("error");
+      setSaveError((err && err.message) || String(err));
+    }
+  };
+
+  const handleCreate = async () => {
+    const newCar = {
+      id: uid(),
+      brand: "",
+      model: "",
+      plate: "",
+      km: "",
+      clientName: "",
+      clientPhone: "",
+      parts: [],
+      photos: [],
+      clientPhotos: [],
+      laborHours: "",
+      mechanic: "",
+      notes: "",
+      status: "pendiente",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      finishedAt: null,
+    };
+    const updated = [...cars, newCar];
+    setCars(updated);
+    openCarDetail(newCar.id);
+    await saveCar(newCar);
+    await persistIndex(updated);
+  };
+
+  const handleUpdateCar = async (updatedCar) => {
+    setCars((prev) => prev.map((c) => (c.id === updatedCar.id ? updatedCar : c)));
+    await saveCar(updatedCar);
+  };
+
+  const handleDeleteCar = async (id) => {
+    const updated = cars.filter((c) => c.id !== id);
+    setCars(updated);
+    setOpenId(null);
+    await persistIndex(updated);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-100">
+        <p className="text-black text-sm font-medium uppercase">Cargando taller...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-100 px-6">
+        <div className="max-w-sm w-full bg-white border border-red-200 rounded-xl p-5 text-center">
+          <AlertCircle className="mx-auto text-red-500 mb-2" size={28} />
+          <p className="text-stone-700 font-medium mb-1">No se pudieron cargar los datos</p>
+          <p className="text-sm text-black break-words mb-4">{loadError}</p>
+          <button
+            onClick={loadData}
+            className="w-full bg-amber-500 text-white text-sm font-medium py-2 rounded-lg hover:bg-amber-600 transition"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const openCar = cars.find((c) => c.id === openId);
+
+  return (
+    <div className="relative">
+      {openCar ? (
+        <CarDetail
+          car={openCar}
+          onBack={closeCarDetail}
+          onUpdate={handleUpdateCar}
+          onDelete={handleDeleteCar}
+        />
+      ) : (
+        <CarListScreen
+          cars={cars}
+          onOpen={openCarDetail}
+          onCreate={handleCreate}
+          onRefresh={handleRefresh}
+          filter={filter}
+          setFilter={setFilter}
+          query={query}
+          setQuery={setQuery}
+        />
+      )}
+
+      {confirmExit && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-5 max-w-sm w-full text-center shadow-xl">
+            <AlertCircle className="mx-auto text-amber-500 mb-2" size={28} />
+            <p className="text-black font-bold mb-4">¿Seguro que quieres salir?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmExit(false)}
+                className="flex-1 py-2.5 rounded-lg border-2 border-stone-300 text-black font-bold uppercase"
+              >
+                No
+              </button>
+              <button
+                onClick={confirmExitApp}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold uppercase"
+              >
+                Sí
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {saveStatus !== "idle" && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[92vw]">
+          <div
+            className={`text-xs font-medium px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 ${
+              saveStatus === "saving"
+                ? "bg-stone-800 text-white"
+                : saveStatus === "error"
+                ? "bg-red-600 text-white"
+                : "bg-green-600 text-white"
+            }`}
+          >
+            {saveStatus === "saving" && <>Guardando...</>}
+            {saveStatus === "saved" && (
+              <>
+                <Check size={12} /> Guardado
+              </>
+            )}
+            {saveStatus === "error" && (
+              <>
+                <AlertCircle size={12} className="flex-shrink-0" />
+                <span className="truncate">Error al guardar: {saveError}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
