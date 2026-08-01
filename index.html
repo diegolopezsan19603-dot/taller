@@ -50,7 +50,7 @@ import { createPortal } from "react-dom";
 import {
   User, Car, Phone, Gauge, Camera, X, Plus, Check, Package,
   Wrench, ClipboardList, ChevronLeft, Trash2, Edit3, Clock,
-  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2
+  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2, Mic, MicOff
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -600,6 +600,11 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
   const [localCar, setLocalCar] = useState(car);
   const carRef = useRef(car);
   const onUpdateRef = useRef(onUpdate);
+  const [listening, setListening] = useState(false);
+  const [dictationError, setDictationError] = useState(null);
+  const recognitionRef = useRef(null);
+  const speechSupported =
+    typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => setLocalCar(car), [car.id]);
   useEffect(() => {
@@ -617,6 +622,80 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
     },
     [localCar, onUpdate]
   );
+
+  const toggleDictation = () => {
+    const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionImpl) return;
+
+    if (listening) {
+      recognitionRef.current && recognitionRef.current.stop();
+      return;
+    }
+
+    setDictationError(null);
+
+    if (typeof window.isSecureContext !== "undefined" && !window.isSecureContext) {
+      setDictationError(
+        "El dictado por voz solo funciona con conexión segura (https)."
+      );
+      return;
+    }
+
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = "es-ES";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+      }
+      if (finalText.trim()) {
+        const addition = finalText.trim().toUpperCase();
+        const prevNotes = carRef.current.notes || "";
+        const updated = {
+          ...carRef.current,
+          notes: prevNotes ? prevNotes + " " + addition : addition,
+          updatedAt: Date.now(),
+        };
+        carRef.current = updated;
+        setLocalCar(updated);
+        onUpdateRef.current(updated);
+      }
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      const errorMessages = {
+        "not-allowed": "Permiso de micrófono denegado. Revisa los permisos del navegador para esta página.",
+        "service-not-allowed": "El navegador ha bloqueado el micrófono (puede requerir https).",
+        network: "Sin conexión a internet: el dictado por voz necesita red para funcionar.",
+        "no-speech": "No se ha detectado voz. Inténtalo de nuevo hablando más cerca del micrófono.",
+        "audio-capture": "No se ha encontrado ningún micrófono en este dispositivo.",
+        aborted: null,
+      };
+      const msg = event && event.error ? errorMessages[event.error] : null;
+      if (msg !== null) {
+        setDictationError(msg || `Error de dictado: ${event ? event.error : "desconocido"}`);
+      }
+    };
+    recognition.onend = () => setListening(false);
+
+    try {
+      recognitionRef.current = recognition;
+      recognition.start();
+      setListening(true);
+    } catch (err) {
+      setListening(false);
+      setDictationError((err && err.message) || "No se pudo iniciar el dictado por voz.");
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current && recognitionRef.current.stop();
+    };
+  }, []);
 
   const addPart = () => {
     patch({
@@ -820,6 +899,26 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               />
             </div>
           </div>
+          <div className="flex items-center justify-end mb-1">
+            {speechSupported && (
+              <button
+                type="button"
+                onClick={toggleDictation}
+                aria-label={listening ? "Detener dictado" : "Dictar por voz"}
+                className={`flex items-center gap-1.5 text-sm font-bold px-3 py-2 rounded-lg border-2 transition ${
+                  listening
+                    ? "bg-red-600 text-white border-red-600 animate-pulse"
+                    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                }`}
+              >
+                {listening ? <MicOff size={16} /> : <Mic size={16} />}
+                {listening ? "GRABANDO..." : "DICTAR POR VOZ"}
+              </button>
+            )}
+          </div>
+          {dictationError && (
+            <p className="text-sm font-semibold text-red-600 mb-2">{dictationError}</p>
+          )}
           <textarea
             value={localCar.notes}
             onChange={(e) => patch({ notes: e.target.value.toUpperCase() })}
