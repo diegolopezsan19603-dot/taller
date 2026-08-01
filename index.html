@@ -460,10 +460,10 @@ function usePullToRefresh(onRefresh, enabled = true) {
    Estado de pieza
 --------------------------------------------------------- */
 const PART_STATES = {
-  pedir: { label: "Pedir", color: "bg-red-100 text-red-800 border-red-300", dot: "bg-red-500" },
-  pedido: { label: "Pedido", color: "bg-amber-100 text-amber-800 border-amber-300", dot: "bg-amber-500" },
-  recibido: { label: "Recibido", color: "bg-green-100 text-green-800 border-green-300", dot: "bg-green-500" },
-  recambio: { label: "Recambio", color: "bg-blue-100 text-blue-800 border-blue-300", dot: "bg-blue-500" },
+  pedir: { label: "Pedir", shortLabel: "Pedir", color: "bg-red-100 text-red-800 border-red-300", dot: "bg-red-500" },
+  pedido: { label: "Pedido", shortLabel: "Pedido", color: "bg-amber-100 text-amber-800 border-amber-300", dot: "bg-amber-500" },
+  recibido: { label: "Recibido", shortLabel: "Recibido", color: "bg-green-100 text-green-800 border-green-300", dot: "bg-green-500" },
+  recambio: { label: "Recambio", shortLabel: "Recam.", color: "bg-blue-100 text-blue-800 border-blue-300", dot: "bg-blue-500" },
 };
 
 /* ---------------------------------------------------------
@@ -481,6 +481,27 @@ function PartCard({ part, onUpdate, onDelete }) {
   return (
     <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden">
       <div className="p-3.5">
+        <div className="flex items-start gap-2 mb-2.5">
+          <textarea
+            value={part.name}
+            onChange={(e) => onUpdate({ ...part, name: e.target.value.toUpperCase() })}
+            placeholder="NOMBRE DE LA PIEZA"
+            rows={1}
+            onInput={(e) => {
+              e.target.style.height = "auto";
+              e.target.style.height = e.target.scrollHeight + "px";
+            }}
+            className="flex-1 min-w-0 text-base font-bold text-black uppercase border-none outline-none bg-transparent placeholder-stone-400 resize-none overflow-hidden break-words"
+          />
+          <button
+            onClick={() => onDelete(part.id)}
+            aria-label="Eliminar pieza"
+            className="text-black hover:text-red-500 flex-shrink-0 p-1.5"
+          >
+            <Trash2 size={20} />
+          </button>
+        </div>
+
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0">
             {part.photo ? (
@@ -514,27 +535,16 @@ function PartCard({ part, onUpdate, onDelete }) {
           </div>
 
           <div className="flex-1 min-w-0">
-            <textarea
-              value={part.name}
-              onChange={(e) => onUpdate({ ...part, name: e.target.value.toUpperCase() })}
-              placeholder="NOMBRE DE LA PIEZA"
-              rows={1}
-              onInput={(e) => {
-                e.target.style.height = "auto";
-                e.target.style.height = e.target.scrollHeight + "px";
-              }}
-              className="w-full text-base font-bold text-black uppercase border-none outline-none bg-transparent placeholder-stone-400 mb-2 resize-none overflow-hidden break-words"
-            />
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {Object.entries(PART_STATES).map(([key, s]) => (
                 <button
                   key={key}
                   onClick={() => onUpdate({ ...part, status: key })}
-                  className={`text-sm px-3 py-1.5 rounded-full border-2 font-bold uppercase transition ${
+                  className={`w-full text-sm px-2 py-2 rounded-lg border-2 font-bold uppercase text-center leading-tight transition ${
                     part.status === key ? s.color : "bg-stone-50 text-black border-stone-200"
                   }`}
                 >
-                  {s.label}
+                  {s.shortLabel}
                 </button>
               ))}
             </div>
@@ -579,14 +589,6 @@ function PartCard({ part, onUpdate, onDelete }) {
               </div>
             )}
           </div>
-
-          <button
-            onClick={() => onDelete(part.id)}
-            aria-label="Eliminar pieza"
-            className="text-black hover:text-red-500 flex-shrink-0 p-1.5"
-          >
-            <Trash2 size={20} />
-          </button>
         </div>
       </div>
     </div>
@@ -886,7 +888,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3 flex items-center gap-1.5">
             <ClipboardList size={16} /> Mano de obra y trabajo realizado
           </h2>
-          <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-[1fr_1.6fr] gap-3 mb-3">
             <div>
               <label className="text-sm font-semibold text-black">Horas estimadas</label>
               <input
@@ -898,22 +900,22 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
                 className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
               />
             </div>
-          </div>
-          <div className="flex items-center justify-end mb-1">
             {speechSupported && (
-              <button
-                type="button"
-                onClick={toggleDictation}
-                aria-label={listening ? "Detener dictado" : "Dictar por voz"}
-                className={`flex items-center gap-1.5 text-sm font-bold px-3 py-2 rounded-lg border-2 transition ${
-                  listening
-                    ? "bg-red-600 text-white border-red-600 animate-pulse"
-                    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                }`}
-              >
-                {listening ? <MicOff size={16} /> : <Mic size={16} />}
-                {listening ? "GRABANDO..." : "DICTAR POR VOZ"}
-              </button>
+              <div className="flex flex-col justify-end">
+                <button
+                  type="button"
+                  onClick={toggleDictation}
+                  aria-label={listening ? "Detener dictado" : "Dictar por voz"}
+                  className={`w-full flex items-center justify-center gap-1.5 text-sm font-bold px-2 py-3 rounded-lg border-2 whitespace-nowrap transition ${
+                    listening
+                      ? "bg-red-600 text-white border-red-600 animate-pulse"
+                      : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                  }`}
+                >
+                  {listening ? <MicOff size={16} className="flex-shrink-0" /> : <Mic size={16} className="flex-shrink-0" />}
+                  {listening ? "GRABANDO..." : "DICTAR POR VOZ"}
+                </button>
+              </div>
             )}
           </div>
           {dictationError && (
@@ -1242,11 +1244,18 @@ function App() {
   // Gestión del botón "atrás" del navegador/móvil:
   // - Si hay un vehículo abierto, "atrás" vuelve a la lista principal.
   // - Si estamos en la lista principal, "atrás" pide confirmación antes de salir.
+  const exitingRef = useRef(false);
+
   useEffect(() => {
     // Estado base para poder interceptar el "atrás" incluso en la pantalla inicial.
     window.history.pushState({ screen: "list" }, "");
 
     const handlePopState = () => {
+      if (exitingRef.current) {
+        // El usuario ya confirmó que quiere salir: dejamos que el navegador
+        // continúe hacia atrás de verdad, sin volver a interceptarlo.
+        return;
+      }
       if (openIdRef.current) {
         // Estábamos en el detalle: volvemos a la lista y reponemos el estado base.
         setOpenId(null);
@@ -1273,9 +1282,15 @@ function App() {
 
   const confirmExitApp = () => {
     setConfirmExit(false);
-    // No hay forma fiable de "cerrar" la pestaña programáticamente,
-    // así que retrocedemos de verdad en el historial del navegador.
-    window.history.go(-2);
+    exitingRef.current = true;
+    // Intento directo de cerrar la pestaña (solo funciona si el navegador lo permite,
+    // por ejemplo si esta pestaña fue abierta por un enlace desde otra app).
+    window.close();
+    // Si el navegador no permite cerrarla (lo habitual), retrocedemos de verdad
+    // en el historial para salir del sitio, ahora que ya no se interceptará.
+    setTimeout(() => {
+      window.history.back();
+    }, 50);
   };
 
   const loadData = async ({ silent } = {}) => {
