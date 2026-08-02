@@ -309,7 +309,7 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
           <div
-            className="fixed z-50 bg-white rounded-lg border border-stone-200 shadow-lg overflow-hidden w-40"
+            className="fixed z-50 bg-white rounded-lg border border-stone-200 shadow-lg overflow-hidden w-48"
             style={{ top: menuPos.top, left: menuPos.left }}
           >
             <button
@@ -318,9 +318,9 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
                 setMenuOpen(false);
                 cameraRef.current?.click();
               }}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 text-left"
+              className="w-full flex items-center gap-2.5 px-3.5 py-3.5 text-sm font-medium text-stone-700 hover:bg-stone-50 text-left"
             >
-              <Camera size={14} /> Hacer foto
+              <Camera size={20} /> Hacer foto
             </button>
             <button
               type="button"
@@ -328,9 +328,9 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
                 setMenuOpen(false);
                 galleryRef.current?.click();
               }}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-stone-700 hover:bg-stone-50 text-left border-t border-stone-100"
+              className="w-full flex items-center gap-2.5 px-3.5 py-3.5 text-sm font-medium text-stone-700 hover:bg-stone-50 text-left border-t border-stone-100"
             >
-              <Package size={14} /> Elegir de galería
+              <Package size={20} /> Elegir de galería
             </button>
           </div>
         </>,
@@ -1228,7 +1228,6 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
 // para recuperar la contraseña original.
 const ACCESS_PASSWORD_HASH =
   "ded5bd5485b9b5aa52f61b1a1fcf884e1b9e983f36f632239d5cb94cff54e671";
-const SESSION_UNLOCK_KEY = "workshop:unlocked";
 
 async function sha256Hex(text) {
   const encoded = new TextEncoder().encode(text);
@@ -1239,9 +1238,7 @@ async function sha256Hex(text) {
 }
 
 function LoginGate({ children }) {
-  const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem(SESSION_UNLOCK_KEY) === "1"
-  );
+  const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [checking, setChecking] = useState(false);
@@ -1252,7 +1249,6 @@ function LoginGate({ children }) {
     setError(null);
     const hash = await sha256Hex(password);
     if (hash === ACCESS_PASSWORD_HASH) {
-      sessionStorage.setItem(SESSION_UNLOCK_KEY, "1");
       setUnlocked(true);
     } else {
       setError("Contraseña incorrecta.");
