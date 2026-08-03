@@ -585,8 +585,10 @@ function PartCard({ part, onUpdate, onDelete }) {
               type="button"
               onClick={toggleNameDictation}
               aria-label={listeningName ? "Detener dictado" : "Dictar nombre de la pieza"}
-              className={`flex-shrink-0 p-1.5 rounded-md ${
-                listeningName ? "text-red-600 animate-pulse" : "text-amber-600 hover:text-amber-700"
+              className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border-2 transition ${
+                listeningName
+                  ? "bg-red-600 text-white border-red-600 animate-pulse"
+                  : "bg-white text-amber-600 border-stone-300 hover:border-amber-400 hover:text-amber-700"
               }`}
             >
               {listeningName ? <MicOff size={19} /> : <Mic size={19} />}
@@ -969,14 +971,13 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
                   type="button"
                   onClick={toggleDictation}
                   aria-label={listening ? "Detener dictado" : "Dictar por voz"}
-                  className={`w-full flex items-center justify-center gap-1.5 text-sm font-bold px-2 py-3 rounded-lg border-2 whitespace-nowrap transition ${
+                  className={`w-full flex items-center justify-center py-3 rounded-lg border-2 transition ${
                     listening
                       ? "bg-red-600 text-white border-red-600 animate-pulse"
-                      : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                      : "bg-white text-amber-600 border-stone-300 hover:border-amber-400 hover:text-amber-700"
                   }`}
                 >
-                  {listening ? <MicOff size={16} className="flex-shrink-0" /> : <Mic size={16} className="flex-shrink-0" />}
-                  {listening ? "GRABANDO..." : "DICTAR POR VOZ"}
+                  {listening ? <MicOff size={19} /> : <Mic size={19} />}
                 </button>
               </div>
             )}
@@ -1011,13 +1012,13 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               </button>
               <button
                 onClick={() => patch({ paid: !localCar.paid })}
-                className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-base font-bold uppercase active:scale-[0.98] transition ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold uppercase active:scale-[0.98] transition ${
                   localCar.paid
                     ? "bg-emerald-600 text-white hover:bg-emerald-700"
                     : "bg-amber-100 text-amber-800 border-2 border-amber-300 hover:bg-amber-200"
                 }`}
               >
-                <DollarSign size={18} /> {localCar.paid ? "Cobrado" : "Marcar cobrado"}
+                <DollarSign size={16} /> Cobrado
               </button>
             </>
           )}
@@ -1267,18 +1268,9 @@ function CarListItem({ car, onOpen }) {
 /* ---------------------------------------------------------
    Pantalla: lista / bandeja
 --------------------------------------------------------- */
-function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery, onRequestNotifications }) {
+function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
-  const [notifPermission, setNotifPermission] = useState(
-    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
-  );
-
-  const handleBellClick = async () => {
-    if (notifPermission === "granted") return;
-    const result = await onRequestNotifications();
-    setNotifPermission(result);
-  };
 
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1349,15 +1341,6 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleBellClick}
-              aria-label={
-                notifPermission === "granted" ? "Notificaciones activadas" : "Activar notificaciones"
-              }
-              className={notifPermission === "granted" ? "text-amber-400" : "text-white"}
-            >
-              <Bell size={22} fill={notifPermission === "granted" ? "currentColor" : "none"} />
-            </button>
-            <button
               onClick={toggleFullscreen}
               aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
               className="text-white"
@@ -1410,12 +1393,14 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
           <ReturnsSection />
         ) : (
           <>
-            <button
-              onClick={onCreate}
-              className="w-full flex items-center justify-center gap-2 py-3 mb-4 rounded-xl border-2 border-dashed border-stone-300 text-black font-bold uppercase hover:border-amber-400 hover:text-amber-600 transition"
-            >
-              <Plus size={18} /> Registrar nuevo vehículo
-            </button>
+            {filter !== "terminado" && (
+              <button
+                onClick={onCreate}
+                className="w-full flex items-center justify-center gap-2 py-3 mb-4 rounded-xl border-2 border-dashed border-stone-300 text-black font-bold uppercase hover:border-amber-400 hover:text-amber-600 transition"
+              >
+                <Plus size={18} /> Registrar nuevo vehículo
+              </button>
+            )}
 
             {filtered.length === 0 ? (
               <div className="text-center py-12">
@@ -1763,7 +1748,6 @@ function App() {
           setFilter={setFilter}
           query={query}
           setQuery={setQuery}
-          onRequestNotifications={requestNotificationPermission}
         />
       )}
 
