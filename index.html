@@ -50,7 +50,7 @@ import { createPortal } from "react-dom";
 import {
   User, Car, Phone, Gauge, Camera, X, Plus, Check, Package,
   Wrench, ClipboardList, ChevronLeft, Trash2, Edit3, Clock,
-  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2, Mic, MicOff
+  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2, Mic, MicOff, Share2, Bell, DollarSign, RotateCcw
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -301,7 +301,7 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
         disabled={loading}
         className={btnClass}
       >
-        <Camera size={small ? 14 : 16} />
+        <Camera size={small ? 22 : 18} />
         {loading ? "Cargando..." : label}
       </button>
 
@@ -345,12 +345,44 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
 --------------------------------------------------------- */
 function ImageLightbox({ src, onClose }) {
   if (!src) return null;
+
+  const handleShare = async (e) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const file = new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        // Alternativa si el navegador no admite compartir archivos:
+        // se descarga la imagen para que el usuario la comparta manualmente.
+        const link = document.createElement("a");
+        link.href = src;
+        link.download = "foto.jpg";
+        link.click();
+      }
+    } catch (err) {
+      if (err && err.name !== "AbortError") {
+        console.error("No se pudo compartir la imagen:", err);
+      }
+    }
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <img src={src} alt="" className="max-w-full max-h-full rounded-lg" />
+      <button
+        className="absolute top-4 left-4 text-white bg-white/10 rounded-full p-2"
+        onClick={handleShare}
+        aria-label="Compartir imagen"
+      >
+        <Share2 size={20} />
+      </button>
       <button
         className="absolute top-4 right-4 text-white bg-white/10 rounded-full p-2"
         onClick={onClose}
@@ -476,7 +508,58 @@ function PartCard({ part, onUpdate, onDelete }) {
   const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
   const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? part.supplier : "");
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [listeningName, setListeningName] = useState(false);
+  const nameRecognitionRef = useRef(null);
+  const partRef = useRef(part);
+  useEffect(() => {
+    partRef.current = part;
+  }, [part]);
+  const speechSupportedName =
+    typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
   const state = PART_STATES[part.status];
+
+  const toggleNameDictation = () => {
+    const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionImpl) return;
+
+    if (listeningName) {
+      nameRecognitionRef.current && nameRecognitionRef.current.stop();
+      return;
+    }
+
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = "es-ES";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+      }
+      if (finalText.trim()) {
+        const addition = finalText.trim().toUpperCase();
+        const prevName = partRef.current.name || "";
+        onUpdate({ ...partRef.current, name: prevName ? prevName + " " + addition : addition });
+      }
+    };
+    recognition.onerror = () => setListeningName(false);
+    recognition.onend = () => setListeningName(false);
+
+    try {
+      nameRecognitionRef.current = recognition;
+      recognition.start();
+      setListeningName(true);
+    } catch (err) {
+      setListeningName(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      nameRecognitionRef.current && nameRecognitionRef.current.stop();
+    };
+  }, []);
 
   return (
     <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden">
@@ -493,6 +576,18 @@ function PartCard({ part, onUpdate, onDelete }) {
             }}
             className="flex-1 min-w-0 text-base font-bold text-black uppercase border-none outline-none bg-transparent placeholder-stone-400 resize-none overflow-hidden break-words"
           />
+          {speechSupportedName && (
+            <button
+              type="button"
+              onClick={toggleNameDictation}
+              aria-label={listeningName ? "Detener dictado" : "Dictar nombre de la pieza"}
+              className={`flex-shrink-0 p-1.5 rounded-md ${
+                listeningName ? "text-red-600 animate-pulse" : "text-amber-600 hover:text-amber-700"
+              }`}
+            >
+              {listeningName ? <MicOff size={19} /> : <Mic size={19} />}
+            </button>
+          )}
           <button
             onClick={() => onDelete(part.id)}
             aria-label="Eliminar pieza"
@@ -939,12 +1034,24 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               <Check size={20} /> Marcar como terminado
             </button>
           ) : (
-            <button
-              onClick={() => patch({ status: "pendiente", finishedAt: null })}
-              className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-lg font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
-            >
-              <Clock size={20} /> Reabrir vehículo
-            </button>
+            <>
+              <button
+                onClick={() => patch({ status: "pendiente", finishedAt: null, paid: false })}
+                className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-base font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
+              >
+                <Clock size={18} /> Reabrir
+              </button>
+              <button
+                onClick={() => patch({ paid: !localCar.paid })}
+                className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-base font-bold uppercase active:scale-[0.98] transition ${
+                  localCar.paid
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "bg-amber-100 text-amber-800 border-2 border-amber-300 hover:bg-amber-200"
+                }`}
+              >
+                <DollarSign size={18} /> {localCar.paid ? "Cobrado" : "Marcar cobrado"}
+              </button>
+            </>
           )}
         </div>
 
@@ -977,6 +1084,134 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   Sección: Devoluciones (solo fotos, sin más datos asociados)
+--------------------------------------------------------- */
+const RETURNS_KEY = "workshop:returns";
+
+function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
+  const isCustomSupplier = !!photo.supplier && !SUPPLIER_OPTIONS.includes(photo.supplier);
+  const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
+  const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? photo.supplier : "");
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  return (
+    <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden p-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 relative">
+          <img
+            src={photo.data}
+            alt=""
+            onClick={() => setViewerOpen(true)}
+            className="w-20 h-20 object-cover rounded-md border border-stone-300 cursor-pointer"
+          />
+          <button
+            onClick={() => onDelete(photo.id)}
+            aria-label="Eliminar foto"
+            className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
+          >
+            <X size={13} />
+          </button>
+          {viewerOpen && (
+            <ImageLightbox src={photo.data} onClose={() => setViewerOpen(false)} />
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <select
+            value={showCustomSupplier ? "Otro" : (photo.supplier || "")}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === "Otro") {
+                setShowCustomSupplier(true);
+                onUpdate({ ...photo, supplier: customSupplier });
+              } else {
+                setShowCustomSupplier(false);
+                onUpdate({ ...photo, supplier: val });
+              }
+            }}
+            className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium bg-white"
+          >
+            <option value="">PEDIDO EN...</option>
+            {SUPPLIER_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt.toUpperCase()}
+              </option>
+            ))}
+            <option value="Otro">OTRO:</option>
+          </select>
+          {showCustomSupplier && (
+            <input
+              autoFocus
+              value={customSupplier}
+              onChange={(e) => {
+                const val = e.target.value.toUpperCase();
+                setCustomSupplier(val);
+                onUpdate({ ...photo, supplier: val });
+              }}
+              placeholder="ESCRIBE EL PROVEEDOR"
+              className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReturnsSection() {
+  const [photos, setPhotos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const stored = (await storageGet(RETURNS_KEY)) || [];
+      setPhotos(stored);
+      setLoading(false);
+    })();
+  }, []);
+
+  const persist = async (updated) => {
+    setPhotos(updated);
+    await storageSet(RETURNS_KEY, updated);
+  };
+
+  const addPhoto = (data) => {
+    persist([{ id: uid(), data, supplier: "", createdAt: Date.now() }, ...photos]);
+  };
+
+  const updatePhoto = (updated) => {
+    persist(photos.map((p) => (p.id === updated.id ? updated : p)));
+  };
+
+  const deletePhoto = (id) => {
+    persist(photos.filter((p) => p.id !== id));
+  };
+
+  if (loading) {
+    return <p className="text-sm text-black uppercase text-center py-8">Cargando...</p>;
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-black uppercase tracking-wide">Devoluciones</h2>
+        <PhotoPicker onPick={addPhoto} label="Añadir foto" small />
+      </div>
+      <div className="space-y-2.5">
+        {photos.map((p) => (
+          <ReturnPhotoCard key={p.id} photo={p} onUpdate={updatePhoto} onDelete={deletePhoto} />
+        ))}
+      </div>
+      {photos.length === 0 && (
+        <p className="text-sm font-medium text-black uppercase text-center py-8">
+          Todavía no hay fotos de devoluciones.
+        </p>
+      )}
     </div>
   );
 }
@@ -1062,10 +1297,18 @@ function CarListItem({ car, onOpen }) {
 /* ---------------------------------------------------------
    Pantalla: lista / bandeja
 --------------------------------------------------------- */
-function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery }) {
+function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery, onRequestNotifications }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
-  const [manualRefreshing, setManualRefreshing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
+  );
+
+  const handleBellClick = async () => {
+    if (notifPermission === "granted") return;
+    const result = await onRequestNotifications();
+    setNotifPermission(result);
+  };
 
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1083,12 +1326,6 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
     } catch (err) {
       console.error("No se pudo cambiar el modo pantalla completa:", err);
     }
-  };
-
-  const handleManualRefresh = async () => {
-    setManualRefreshing(true);
-    await onRefresh();
-    setManualRefreshing(false);
   };
 
   const filtered = cars
@@ -1142,18 +1379,20 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
           </div>
           <div className="flex items-center gap-3">
             <button
+              onClick={handleBellClick}
+              aria-label={
+                notifPermission === "granted" ? "Notificaciones activadas" : "Activar notificaciones"
+              }
+              className={notifPermission === "granted" ? "text-amber-400" : "text-white"}
+            >
+              <Bell size={22} fill={notifPermission === "granted" ? "currentColor" : "none"} />
+            </button>
+            <button
               onClick={toggleFullscreen}
               aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
               className="text-white"
             >
-              {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-            </button>
-            <button
-              onClick={handleManualRefresh}
-              aria-label="Actualizar"
-              className="text-white"
-            >
-              <RefreshCw size={17} className={manualRefreshing ? "animate-spin" : ""} />
+              {isFullscreen ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
             </button>
           </div>
         </div>
@@ -1168,51 +1407,65 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
           />
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           <button
             onClick={() => setFilter("pendiente")}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-bold uppercase transition ${
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-1 rounded-lg text-[11px] leading-tight font-bold uppercase whitespace-nowrap transition ${
               filter === "pendiente" ? "bg-amber-500 text-stone-900" : "bg-stone-800 text-white"
             }`}
           >
-            <Clock size={14} /> Pendientes ({pendingCount})
+            <Clock size={12} className="shrink-0" /> Pend. ({pendingCount})
           </button>
           <button
             onClick={() => setFilter("terminado")}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-bold uppercase transition ${
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-1 rounded-lg text-[11px] leading-tight font-bold uppercase whitespace-nowrap transition ${
               filter === "terminado" ? "bg-green-500 text-stone-900" : "bg-stone-800 text-white"
             }`}
           >
-            <CheckCircle2 size={14} /> Terminados ({doneCount})
+            <CheckCircle2 size={12} className="shrink-0" /> Term. ({doneCount})
+          </button>
+          <button
+            onClick={() => setFilter("devoluciones")}
+            className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-1 rounded-lg text-[11px] leading-tight font-bold uppercase whitespace-nowrap transition ${
+              filter === "devoluciones" ? "bg-blue-500 text-stone-900" : "bg-stone-800 text-white"
+            }`}
+          >
+            <RotateCcw size={12} className="shrink-0" /> Devol.
           </button>
         </div>
       </div>
 
       <div className="p-4 max-w-lg mx-auto">
-        <button
-          onClick={onCreate}
-          className="w-full flex items-center justify-center gap-2 py-3 mb-4 rounded-xl border-2 border-dashed border-stone-300 text-black font-bold uppercase hover:border-amber-400 hover:text-amber-600 transition"
-        >
-          <Plus size={18} /> Registrar nuevo vehículo
-        </button>
-
-        {filtered.length === 0 ? (
-          <div className="text-center py-12">
-            <AlertCircle size={28} className="mx-auto text-black mb-2" />
-            <p className="text-sm font-medium text-black uppercase">
-              {query
-                ? "No hay vehículos que coincidan con la búsqueda."
-                : filter === "pendiente"
-                ? "No hay vehículos pendientes."
-                : "Todavía no hay vehículos terminados."}
-            </p>
-          </div>
+        {filter === "devoluciones" ? (
+          <ReturnsSection />
         ) : (
-          <div className="space-y-2.5">
-            {filtered.map((car) => (
-              <CarListItem key={car.id} car={car} onOpen={onOpen} />
-            ))}
-          </div>
+          <>
+            <button
+              onClick={onCreate}
+              className="w-full flex items-center justify-center gap-2 py-3 mb-4 rounded-xl border-2 border-dashed border-stone-300 text-black font-bold uppercase hover:border-amber-400 hover:text-amber-600 transition"
+            >
+              <Plus size={18} /> Registrar nuevo vehículo
+            </button>
+
+            {filtered.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle size={28} className="mx-auto text-black mb-2" />
+                <p className="text-sm font-medium text-black uppercase">
+                  {query
+                    ? "No hay vehículos que coincidan con la búsqueda."
+                    : filter === "pendiente"
+                    ? "No hay vehículos pendientes."
+                    : "Todavía no hay vehículos terminados."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {filtered.map((car) => (
+                  <CarListItem key={car.id} car={car} onOpen={onOpen} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -1393,6 +1646,65 @@ function App() {
     loadData();
   }, []);
 
+  // Notificación periódica (cada 2 días como mínimo) con el resumen de
+  // piezas pendientes de pedir. Solo se comprueba al abrir/recargar la app,
+  // no llega si el móvil está bloqueado con la app cerrada del todo.
+  const NOTIFY_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000; // 2 días
+  const LAST_NOTIFY_KEY = "workshop:lastPartsNotify";
+
+  const checkPartsNotification = useCallback((carList) => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+
+    const lastNotify = Number(localStorage.getItem(LAST_NOTIFY_KEY) || 0);
+    if (Date.now() - lastNotify < NOTIFY_INTERVAL_MS) return;
+
+    let totalParts = 0;
+    let vehiclesAffected = 0;
+    carList.forEach((c) => {
+      const toOrder = (c.parts || []).filter((p) => p.status === "pedir").length;
+      if (toOrder > 0) {
+        totalParts += toOrder;
+        vehiclesAffected += 1;
+      }
+    });
+
+    if (totalParts === 0) return;
+
+    const plural = (n, s, p) => (n === 1 ? s : p);
+    const body = `${totalParts} ${plural(totalParts, "pieza", "piezas")} por pedir para ${vehiclesAffected} ${plural(
+      vehiclesAffected,
+      "vehículo",
+      "vehículos"
+    )}`;
+
+    try {
+      new Notification("Taller · Piezas pendientes", { body });
+      localStorage.setItem(LAST_NOTIFY_KEY, String(Date.now()));
+    } catch (err) {
+      console.error("No se pudo mostrar la notificación:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!loading && cars.length > 0) {
+      checkPartsNotification(cars);
+    }
+  }, [loading, cars, checkPartsNotification]);
+
+  const requestNotificationPermission = async () => {
+    if (typeof Notification === "undefined") return "unsupported";
+    if (Notification.permission === "granted") return "granted";
+    try {
+      const result = await Notification.requestPermission();
+      if (result === "granted") checkPartsNotification(cars);
+      return result;
+    } catch (err) {
+      console.error("No se pudo pedir permiso de notificaciones:", err);
+      return "denied";
+    }
+  };
+
   const handleRefresh = useCallback(() => loadData({ silent: true }), []);
 
   const persistIndex = async (list) => {
@@ -1508,6 +1820,7 @@ function App() {
           setFilter={setFilter}
           query={query}
           setQuery={setQuery}
+          onRequestNotifications={requestNotificationPermission}
         />
       )}
 
