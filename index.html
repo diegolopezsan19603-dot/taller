@@ -52,7 +52,7 @@ import { createPortal } from "react-dom";
 import {
   User, Car, Phone, Gauge, Camera, X, Plus, Check, Package,
   Wrench, ClipboardList, ChevronLeft, Trash2, Edit3, Clock,
-  CheckCircle2, AlertCircle, Search, RefreshCw, Maximize2, Minimize2, Mic, MicOff, Share2, Bell, DollarSign, RotateCcw
+  CheckCircle2, AlertCircle, RefreshCw, Maximize2, Minimize2, Mic, MicOff, Share2, Bell, RotateCcw
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -565,11 +565,20 @@ function PartCard({ part, onUpdate, onDelete }) {
     };
   }, []);
 
+  const nameTextareaRef = useRef(null);
+  useEffect(() => {
+    if (nameTextareaRef.current) {
+      nameTextareaRef.current.style.height = "auto";
+      nameTextareaRef.current.style.height = nameTextareaRef.current.scrollHeight + "px";
+    }
+  }, [part.name]);
+
   return (
     <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden">
       <div className="p-3.5">
         <div className="flex items-start gap-2 mb-2.5">
           <textarea
+            ref={nameTextareaRef}
             value={part.name}
             onChange={(e) => onUpdate({ ...part, name: e.target.value.toUpperCase() })}
             placeholder="NOMBRE DE LA PIEZA"
@@ -953,8 +962,8 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3 flex items-center gap-1.5">
             <ClipboardList size={16} /> Mano de obra y trabajo realizado
           </h2>
-          <div className="grid grid-cols-[1fr_1.6fr] gap-3 mb-3">
-            <div>
+          <div className="flex items-end gap-3 mb-3">
+            <div className="flex-1">
               <label className="text-sm font-semibold text-black">Horas estimadas</label>
               <input
                 type="number"
@@ -966,20 +975,18 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               />
             </div>
             {speechSupported && (
-              <div className="flex flex-col justify-end">
-                <button
-                  type="button"
-                  onClick={toggleDictation}
-                  aria-label={listening ? "Detener dictado" : "Dictar por voz"}
-                  className={`w-full flex items-center justify-center py-3 rounded-lg border-2 transition ${
-                    listening
-                      ? "bg-red-600 text-white border-red-600 animate-pulse"
-                      : "bg-white text-amber-600 border-stone-300 hover:border-amber-400 hover:text-amber-700"
-                  }`}
-                >
-                  {listening ? <MicOff size={19} /> : <Mic size={19} />}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={toggleDictation}
+                aria-label={listening ? "Detener dictado" : "Dictar por voz"}
+                className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border-2 transition ${
+                  listening
+                    ? "bg-red-600 text-white border-red-600 animate-pulse"
+                    : "bg-white text-amber-600 border-stone-300 hover:border-amber-400 hover:text-amber-700"
+                }`}
+              >
+                {listening ? <MicOff size={19} /> : <Mic size={19} />}
+              </button>
             )}
           </div>
           {dictationError && (
@@ -1003,24 +1010,12 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               <Check size={20} /> Marcar como terminado
             </button>
           ) : (
-            <>
-              <button
-                onClick={() => patch({ status: "pendiente", finishedAt: null, paid: false })}
-                className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-base font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
-              >
-                <Clock size={18} /> Reabrir
-              </button>
-              <button
-                onClick={() => patch({ paid: !localCar.paid })}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold uppercase active:scale-[0.98] transition ${
-                  localCar.paid
-                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                    : "bg-amber-100 text-amber-800 border-2 border-amber-300 hover:bg-amber-200"
-                }`}
-              >
-                <DollarSign size={16} /> Cobrado
-              </button>
-            </>
+            <button
+              onClick={() => patch({ status: "pendiente", finishedAt: null })}
+              className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-base font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
+            >
+              <Clock size={18} /> Reabrir
+            </button>
           )}
         </div>
 
@@ -1191,10 +1186,14 @@ function ReturnsSection() {
    Tarjeta resumen de vehículo (lista)
 --------------------------------------------------------- */
 function CarListItem({ car, onOpen }) {
-  const partsToOrder = car.parts.filter((p) => p.status === "pedir").length;
-  const partsOrdered = car.parts.filter((p) => p.status === "pedido").length;
-
   const thumb = car.photos && car.photos[0];
+  const entryDate = car.createdAt
+    ? new Date(car.createdAt).toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+    : null;
 
   return (
     <button
@@ -1209,53 +1208,19 @@ function CarListItem({ car, onOpen }) {
             <Car size={40} />
           </div>
         )}
-        <div className="absolute top-2 right-2">
-          {car.status === "terminado" ? (
-            <span className="flex items-center gap-1 text-[11px] font-bold uppercase bg-green-100 text-green-700 px-2 py-1 rounded-full shadow-sm">
-              <CheckCircle2 size={11} /> Terminado
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 text-[11px] font-bold uppercase bg-amber-100 text-amber-700 px-2 py-1 rounded-full shadow-sm">
-              <Clock size={11} /> Pendiente
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="p-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <User size={15} className="text-black flex-shrink-0" />
-            <p className="font-bold text-black uppercase truncate">
-              {car.clientName || "Sin nombre"}
-            </p>
-          </div>
-          {car.clientPhone && (
-            <p className="text-sm text-black mt-0.5 ml-[23px] flex items-center gap-1">
-              <Phone size={12} className="flex-shrink-0" /> {car.clientPhone}
-            </p>
-          )}
-          {(car.plate || car.brand || car.model || car.km) && (
-            <p className="text-sm text-black mt-1 ml-[23px] uppercase">
-              {[
-                car.plate || null,
-                [car.brand, car.model].filter(Boolean).join(" ") || null,
-                car.km ? `${car.km} km` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
-        </div>
-        {(partsToOrder > 0 || partsOrdered > 0) && (
-          <div className="flex gap-2 mt-2.5 ml-[23px]">
-            {partsToOrder > 0 && (
-              <span className="text-[11px] font-bold uppercase bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">
-                {partsToOrder} por pedir
+        {(entryDate || car.mechanic) && (
+          <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
+            {car.mechanic ? (
+              <span className="text-[11px] font-bold uppercase bg-black/60 text-white px-2 py-1 rounded-full shadow-sm truncate">
+                <Wrench size={11} className="inline -mt-0.5 mr-1" />
+                {car.mechanic}
               </span>
+            ) : (
+              <span />
             )}
-            {partsOrdered > 0 && (
-              <span className="text-[11px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full">
-                {partsOrdered} pedidas
+            {entryDate && (
+              <span className="text-[11px] font-bold uppercase bg-black/60 text-white px-2 py-1 rounded-full shadow-sm flex-shrink-0">
+                {entryDate}
               </span>
             )}
           </div>
@@ -1268,7 +1233,7 @@ function CarListItem({ car, onOpen }) {
 /* ---------------------------------------------------------
    Pantalla: lista / bandeja
 --------------------------------------------------------- */
-function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, query, setQuery }) {
+function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
 
@@ -1292,16 +1257,6 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
 
   const filtered = cars
     .filter((c) => (filter === "pendiente" ? c.status !== "terminado" : c.status === "terminado"))
-    .filter((c) => {
-      if (!query.trim()) return true;
-      const q = query.toLowerCase();
-      return (
-        c.plate?.toLowerCase().includes(q) ||
-        c.brand?.toLowerCase().includes(q) ||
-        c.model?.toLowerCase().includes(q) ||
-        c.clientName?.toLowerCase().includes(q)
-      );
-    })
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
   const pendingCount = cars.filter((c) => c.status !== "terminado").length;
@@ -1350,16 +1305,6 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
           </div>
         </div>
 
-        <div className="relative mb-3">
-          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/70" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="BUSCAR POR MATRÍCULA, MARCA O CLIENTE..."
-            className="w-full pl-8 pr-3 py-2 text-sm uppercase rounded-lg bg-stone-800 border border-stone-700 text-white placeholder-white/50 outline-none focus:border-amber-500"
-          />
-        </div>
-
         <div className="flex gap-1.5">
           <button
             onClick={() => setFilter("pendiente")}
@@ -1406,9 +1351,7 @@ function CarListScreen({ cars, onOpen, onCreate, onRefresh, filter, setFilter, q
               <div className="text-center py-12">
                 <AlertCircle size={28} className="mx-auto text-black mb-2" />
                 <p className="text-sm font-medium text-black uppercase">
-                  {query
-                    ? "No hay vehículos que coincidan con la búsqueda."
-                    : filter === "pendiente"
+                  {filter === "pendiente"
                     ? "No hay vehículos pendientes."
                     : "Todavía no hay vehículos terminados."}
                 </p>
@@ -1509,7 +1452,6 @@ function App() {
   const [cars, setCars] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("pendiente");
-  const [query, setQuery] = useState("");
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
   const openIdRef = useRef(openId);
@@ -1746,8 +1688,6 @@ function App() {
           onRefresh={handleRefresh}
           filter={filter}
           setFilter={setFilter}
-          query={query}
-          setQuery={setQuery}
         />
       )}
 
