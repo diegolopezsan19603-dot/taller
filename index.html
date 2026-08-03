@@ -22,6 +22,8 @@
 {
   "imports": {
     "react": "https://esm.sh/react@18.3.1?target=es2022",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022",
+    "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime?target=es2022",
     "react-dom": "https://esm.sh/react-dom@18.3.1?target=es2022",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?target=es2022",
     "lucide-react": "https://esm.sh/lucide-react@0.383.0?external=react&target=es2022",
@@ -411,7 +413,9 @@ function PhotoGallery({ photos, onDelete, onAdd }) {
               className="w-16 h-16 object-cover rounded-md border border-stone-300 cursor-pointer"
             />
             <button
-              onClick={() => onDelete(p.id)}
+              onClick={() => {
+                if (window.confirm("¿Seguro que quieres eliminar esta foto?")) onDelete(p.id);
+              }}
               aria-label="Eliminar foto"
               className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
             >
@@ -589,7 +593,9 @@ function PartCard({ part, onUpdate, onDelete }) {
             </button>
           )}
           <button
-            onClick={() => onDelete(part.id)}
+            onClick={() => {
+              if (window.confirm("¿Seguro que quieres eliminar esta pieza?")) onDelete(part.id);
+            }}
             aria-label="Eliminar pieza"
             className="text-black hover:text-red-500 flex-shrink-0 p-1.5"
           >
@@ -833,9 +839,8 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
         </button>
         <div className="flex-1 min-w-0">
           <p className="font-semibold truncate uppercase">
-            {localCar.brand} {localCar.model || ""}
+            {localCar.clientName || "Sin nombre"}
           </p>
-          <p className="text-xs text-white/80 tracking-wide uppercase">{localCar.plate}</p>
         </div>
         {localCar.status === "terminado" ? (
           <span className="flex items-center gap-1 text-xs font-medium bg-green-500/20 text-green-300 px-2.5 py-1 rounded-full border border-green-500/30 uppercase">
@@ -870,44 +875,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3">
             Vehículo
           </h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-semibold text-black">Marca</label>
-              <input
-                value={localCar.brand}
-                onChange={(e) => patch({ brand: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black">Modelo</label>
-              <input
-                value={localCar.model}
-                onChange={(e) => patch({ model: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black">Matrícula</label>
-              <input
-                value={localCar.plate}
-                onChange={(e) => patch({ plate: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-bold text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black flex items-center gap-1">
-                <Gauge size={14} /> Kilómetros
-              </label>
-              <input
-                type="number"
-                value={localCar.km}
-                onChange={(e) => patch({ km: e.target.value })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-          </div>
-          <div className="mt-4">
+          <div>
             <h3 className="text-sm font-semibold text-black mb-2">Fotos del vehículo</h3>
             <PhotoGallery photos={localCar.photos} onDelete={deletePhoto} onAdd={addPhoto} />
           </div>
@@ -1110,7 +1078,9 @@ function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
             className="w-20 h-20 object-cover rounded-md border border-stone-300 cursor-pointer"
           />
           <button
-            onClick={() => onDelete(photo.id)}
+            onClick={() => {
+              if (window.confirm("¿Seguro que quieres eliminar esta foto?")) onDelete(photo.id);
+            }}
             aria-label="Eliminar foto"
             className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
           >
@@ -1557,7 +1527,6 @@ function App() {
   const [query, setQuery] = useState("");
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
-  const [confirmExit, setConfirmExit] = useState(false);
   const openIdRef = useRef(openId);
 
   useEffect(() => {
@@ -1566,26 +1535,12 @@ function App() {
 
   // Gestión del botón "atrás" del navegador/móvil:
   // - Si hay un vehículo abierto, "atrás" vuelve a la lista principal.
-  // - Si estamos en la lista principal, "atrás" pide confirmación antes de salir.
-  const exitingRef = useRef(false);
-
+  // - Si estamos en la lista principal, "atrás" sale de la app normalmente.
   useEffect(() => {
-    // Estado base para poder interceptar el "atrás" incluso en la pantalla inicial.
-    window.history.pushState({ screen: "list" }, "");
-
     const handlePopState = () => {
-      if (exitingRef.current) {
-        // El usuario ya confirmó que quiere salir: dejamos que el navegador
-        // continúe hacia atrás de verdad, sin volver a interceptarlo.
-        return;
-      }
       if (openIdRef.current) {
         // Estábamos en el detalle: volvemos a la lista y reponemos el estado base.
         setOpenId(null);
-        window.history.pushState({ screen: "list" }, "");
-      } else {
-        // Estábamos en la lista: preguntamos antes de salir.
-        setConfirmExit(true);
         window.history.pushState({ screen: "list" }, "");
       }
     };
@@ -1603,18 +1558,6 @@ function App() {
     window.history.back();
   };
 
-  const confirmExitApp = () => {
-    setConfirmExit(false);
-    exitingRef.current = true;
-    // Intento directo de cerrar la pestaña (solo funciona si el navegador lo permite,
-    // por ejemplo si esta pestaña fue abierta por un enlace desde otra app).
-    window.close();
-    // Si el navegador no permite cerrarla (lo habitual), retrocedemos de verdad
-    // en el historial para salir del sitio, ahora que ya no se interceptará.
-    setTimeout(() => {
-      window.history.back();
-    }, 50);
-  };
 
   const loadData = async ({ silent } = {}) => {
     if (!silent) {
@@ -1822,29 +1765,6 @@ function App() {
           setQuery={setQuery}
           onRequestNotifications={requestNotificationPermission}
         />
-      )}
-
-      {confirmExit && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl p-5 max-w-sm w-full text-center shadow-xl">
-            <AlertCircle className="mx-auto text-amber-500 mb-2" size={28} />
-            <p className="text-black font-bold mb-4">¿Seguro que quieres salir?</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setConfirmExit(false)}
-                className="flex-1 py-2.5 rounded-lg border-2 border-stone-300 text-black font-bold uppercase"
-              >
-                No
-              </button>
-              <button
-                onClick={confirmExitApp}
-                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold uppercase"
-              >
-                Sí
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {saveStatus !== "idle" && (
