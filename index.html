@@ -4,7 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
 <title>Taller · Control de vehículos</title>
-<link rel="icon" href="data:," />
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAD10lEQVR4nO3dv20bdwCG4aNgwyMIAjRJugDpskMGSJMB0qT1EmlTp8oCqTKHAEEjxCmUwrAh2xJF8v6S7/MMQF3xvfe7owRoN2zM7c3149rXwHzu7h92a1/DU6tejLEzDOtGsfgPNnr2WTqGxX6Y4XOMpUKY/YcYPmPMHcJsH274TGmuECb/UMNnTlOHcDXlhxk/c5t6Y5PUZPisYYrTYPQJYPysZYrtjQrA+Fnb2A2eHIDxsxVjtnhSAMbP1py6yaMDMH626pRtHhWA8bN1x2704ACMn3NxzFYPCsD4OTeHbvbVAIyfc3XIdif9Uwg4N3sDcPfn3L224RcDMH4uxb4tewQi7dkA3P25NC9t2glA2jcBuPtzqZ7bthOAtC8CcPfn0n29cScAaZ8DcPen4unWnQCkCYC0q2Hw+EPPp807AUgTAGkCIE0ApO28AFPmBCBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkPZm7QtY2s/ffxh++eHD2pexWb/9+W7445+3a1/GYpwApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEjzP8Jm8uuP/w4/ffffZJ/3+99vh/d/vZvs8/jICUCaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtN3tzfXj2hcBa3ECkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIu7q7f9itfRGwhrv7h50TgDQBkCYA0gRA2tUwfHwZWPtCYEmfNu8EIE0ApH0OwGMQFU+37gQg7YsAnAJcuq837gQg7ZsAnAJcque27QQg7dkAnAJcmpc27QQg7cUAnAJcin1b3nsCiIBz99qGPQKR9moATgHO1SHbPegEEAHn5tDNHvwIJALOxTFbPeodQARs3bEbPfolWARs1SnbPOlbIBGwNadu8uSvQUXAVozZ4qjfA4iAtY3d4OhfhImAtUyxvUnHe3tz/Tjl58FzprzpTvqnEE4D5jb1xmYbrNOAKc11c539ji0Expj7qWKxRxYhcIylHqcXf2YXAvss/R656kurGBiGdb882dy3NqK4bFv7pvB/ZJzavKMIT3wAAAAASUVORK5CYII=" />
+<link rel="apple-touch-icon" href="data:image/png;base64,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" />
 <!-- Etiquetas para que, cuando el archivo esté alojado en una web (https),
      se pueda instalar en la pantalla de inicio y se abra sin la barra de
      direcciones del navegador (como una app). En un archivo local (content://
@@ -15,7 +16,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Taller" />
 <meta name="theme-color" content="#1c1917" />
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Taller%20%C2%B7%20Control%20de%20veh%C3%ADculos%22%2C%22short_name%22%3A%22Taller%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f5f5f4%22%2C%22theme_color%22%3A%22%231c1917%22%2C%22icons%22%3A%5B%5D%7D" />
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Taller%20%C2%B7%20Control%20de%20veh%C3%ADculos%22%2C%22short_name%22%3A%22Taller%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f5f5f4%22%2C%22theme_color%22%3A%22%231c1917%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage/png%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAD10lEQVR4nO3dv20bdwCG4aNgwyMIAjRJugDpskMGSJMB0qT1EmlTp8oCqTKHAEEjxCmUwrAh2xJF8v6S7/MMQF3xvfe7owRoN2zM7c3149rXwHzu7h92a1/DU6tejLEzDOtGsfgPNnr2WTqGxX6Y4XOMpUKY/YcYPmPMHcJsH274TGmuECb/UMNnTlOHcDXlhxk/c5t6Y5PUZPisYYrTYPQJYPysZYrtjQrA%2BFnb2A2eHIDxsxVjtnhSAMbP1py6yaMDMH626pRtHhWA8bN1x2704ACMn3NxzFYPCsD4OTeHbvbVAIyfc3XIdif9Uwg4N3sDcPfn3L224RcDMH4uxb4tewQi7dkA3P25NC9t2glA2jcBuPtzqZ7bthOAtC8CcPfn0n29cScAaZ8DcPen4unWnQCkCYC0q2Hw%2BEPPp807AUgTAGkCIE0ApO28AFPmBCBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkPZm7QtY2s/ffxh%2B%2BeHD2pexWb/9%2BW7445%2B3a1/GYpwApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEjzP8Jm8uuP/w4/ffffZJ/3%2B99vh/d/vZvs8/jICUCaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtN3tzfXj2hcBa3ECkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIu7q7f9itfRGwhrv7h50TgDQBkCYA0gRA2tUwfHwZWPtCYEmfNu8EIE0ApH0OwGMQFU%2B37gQg7YsAnAJcuq837gQg7ZsAnAJcque27QQg7dkAnAJcmpc27QQg7cUAnAJcin1b3nsCiIBz99qGPQKR9moATgHO1SHbPegEEAHn5tDNHvwIJALOxTFbPeodQARs3bEbPfolWARs1SnbPOlbIBGwNadu8uSvQUXAVozZ4qjfA4iAtY3d4OhfhImAtUyxvUnHe3tz/Tjl58FzprzpTvqnEE4D5jb1xmYbrNOAKc11c539ji0Expj7qWKxRxYhcIylHqcXf2YXAvss/R656kurGBiGdb882dy3NqK4bFv7pvB/ZJzavKMIT3wAAAAASUVORK5CYII%3D%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image/png%22%2C%22purpose%22%3A%22any%20maskable%22%7D%2C%7B%22src%22%3A%22data%3Aimage/png%3Bbase64%2CiVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AAAMeElEQVR4nO3czY0cWwGG4RqLqxuCZckxsCILVkhIBIRYsCEEVmTAggRYEIgl62YA4kpmYfq6bc/09E/9nKr3eSKoPrP43j7V9tPEkN6/e/tp62cAmMOHjz89bf0MfM8fZSMGHuAzgbANh74CYw9wG1GwPAe8AIMPMC9BMD8HOgODD7AuQfA4B3gnow8wBjFwH4d2A6MPMDYxcD0H9QqjD7BPYuAyh/MCww9wDELgeQ7ljNEHODYx8IWDmAw/QI0QiAeA4QdoK4dA8oMbfgDOFUMg9YENPwCXlEIg8UENPwC3KITAm60fYGnGH4BbFbbjsIVT%2BOMBsLyj3gYc7kMZfgCWcLQQONQrAOMPwFKOtjGHqJmj/VEAGNsRbgN2fwNg/AFY2xG2Z9cBcIQ/AAD7tPcN2uUVxt4PHYBj2eMrgd3dABh/AEazx23aVQDs8YABaNjbRu3iymJvhwpA2x5eCQx/A2D8AdibPWzX0AGwhwMEgOeMvmHDBsDoBwcArxl5y4YMgJEPDABuMeqmDRcAox4UANxrxG0bKgBGPCAAmMNoGzdMAIx2MAAwt5G2bogAGOlAAGBJo2ze5gEwykEAwFpG2L5NA2CEAwCALWy9gZsFwNYfHAC2tuUWbhIAxh8APttqE1cPAOMPAF/bYhtXDQDjDwDPW3sjVwsA4w8Al625lasEgPEHgOustZmb/z8AAMD6Fg8A3/4B4DZrbOeiAWD8AeA%2BS2/oYgFg/AHgMUtuqd8AAEDQIgHg2z8AzGOpTZ09AIw/AMxriW2dNQCMPwAsY%2B6N9RsAAAiaLQB8%2BweAZc25tbMEgPEHgHXMtbleAQBA0MMB4Ns/AKxrju11AwAAQQ8FgG//ALCNRzf47gAw/gCwrUe22CsAAAi6KwB8%2BweAMdy7yW4AACDo5gDw7R8AxnLPNrsBAICgmwLAt38AGNOtG%2B0GAACCrg4A3/4BYGy3bLUbAAAIuioAfPsHgH24drPdAABAkAAAgKBXA8D1PwDsyzXb7QYAAIIuBoBv/wCwT69tuBsAAAgSAAAQ9GIAuP4HgH27tOVuAAAgSAAAQNCzAeD6HwCO4aVNdwMAAEECAACCvgsA1/8AcCzPbbsbAAAIEgAAECQAACDoqwDw/h8AjunbjXcDAABBAgAAggQAAAT9EgDe/wPAsZ1vvRsAAAgSAAAQJAAAIEgAAEDQm2nyA0AAqDhtvhsAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCnvwfAADQ4wYAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQb/a%2BgFo%2B9Pv/jP9/jf/3foxYBN//ecP05//8ePWj0GUGwAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAEPb1/9/bT1g8BfPHbX/88/eUP/976MWb3x7//OP3tXz9s/RjA/7kBAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAgSAAAQJAAAIAgAQAAQQIAAIIEAAAECQAACBIAABAkAAAg6On9u7eftn4IAGBdbgAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEECAACCBAAABAkAAAgSAAAQJAAAIOjNh48/PW39EADAej58/OnJDQAABAkAAAgSAAAQJAAAIEgAAECQAACAIAEAAEFvpunzvwfc%2BkEAgOWdNt8NAAAECQAACBIAABAkAAAg6JcA8ENAADi28613AwAAQQIAAIIEAAAEfRUAfgcAAMf07ca7AQCAIAEAAEECAACCvgsAvwMAgGN5btvdAABAkAAAgKBnA8BrAAA4hpc23Q0AAAQJAAAIejEAvAYAgH27tOVuAAAgSAAAQNDFAPAaAAD26bUNdwMAAEGvBoBbAADYl2u22w0AAAQJAAAIuioAvAYAgH24drPdAABA0NUB4BYAAMZ2y1a7AQCAoJsCwC0AAIzp1o12AwAAQTcHgFsAABjLPdvsBgAAgu4KALcAADCGezfZDQAABN0dAG4BAGBbj2zxQzcAIgAAtvHoBnsFAABBDweAWwAAWNcc2%2BsGAACCZgkAtwAAsI65Nne2GwARAADLmnNrvQIAgKBZA8AtAAAsY%2B6Nnf0GQAQAwLyW2NZFXgGIAACYx1Kb6jcAABC0WAC4BQCAxyy5pYveAIgAALjP0hu6%2BCsAEQAAt1ljO/0GAACCVgkAtwAAcJ21NnO1GwARAACXrbmVq74CEAEA8Ly1N3L13wCIAAD42hbbuMmPAEUAAHy21SZu9q8ARAAAdVtu4ab/DFAEAFC19QZu/v8AbH0AALC2EbZv8wCYpjEOAgDWMMrmDREA0zTOgQDAUkbaumECYJrGOhgAmNNoGzdUAEzTeAcEAI8acduGC4BpGvOgAOAeo27akAEwTeMeGABca%2BQtGzYApmnsgwOAS0bfsKEDYJrGP0AA%2BNYetmv4Bzz3/t3bT1s/AwC8ZA/DfzL8DcC5PR0sAC1726hdBcA07e%2BAATi%2BPW7T7h74nFcCAGxpj8N/srsbgHN7PngA9m3vG7TrAJim/f8BANifI2zP7j/AOa8EAFjSEYb/ZPc3AOeO9IcBYCxH25hDfZhzbgMAmMPRhv/kkB/qnBAA4B5HHf6TQ70CeM7R/4AAzK%2BwHYf/gOfcBgBwSWH4TzIf9JwQAOBcafhPch/4nBAAaCsO/0n2g58TAgAt5eE/yR/AOSEAcGyG/wsH8QIxAHAMRv95DuUVQgBgnwz/ZQ7nBmIAYGxG/3oO6k5iAGAMRv8%2BDm0GYgBgXUb/cQ5wAYIAYF4Gf34OdAWCAOA2Bn95DngjogDgM2O/DYc%2BKIEAHIWBH9P/AMPbJULU3IMfAAAAAElFTkSuQmCC%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image/png%22%2C%22purpose%22%3A%22any%20maskable%22%7D%5D%7D" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script type="importmap">
@@ -395,10 +396,46 @@ function ImageLightbox({ src, onClose }) {
 }
 
 /* ---------------------------------------------------------
+   Componente: modal de confirmación para eliminar
+--------------------------------------------------------- */
+function ConfirmDeleteModal({ message = "¿Seguro que quieres eliminarlo?", onConfirm, onCancel }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-xl p-5 max-w-sm w-full text-center shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <AlertCircle className="mx-auto text-red-500 mb-2" size={28} />
+        <p className="text-black font-bold mb-4">{message}</p>
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-lg border-2 border-stone-300 text-black font-bold uppercase"
+          >
+            No
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold uppercase"
+          >
+            Sí
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ---------------------------------------------------------
    Componente: galería de fotos con opción de eliminar
 --------------------------------------------------------- */
 function PhotoGallery({ photos, onDelete, onAdd }) {
   const [viewerIdx, setViewerIdx] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   return (
     <div>
       <div className="flex flex-wrap gap-2">
@@ -411,7 +448,7 @@ function PhotoGallery({ photos, onDelete, onAdd }) {
               className="w-16 h-16 object-cover rounded-md border border-stone-300 cursor-pointer"
             />
             <button
-              onClick={() => onDelete(p.id)}
+              onClick={() => setConfirmDeleteId(p.id)}
               aria-label="Eliminar foto"
               className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
             >
@@ -427,6 +464,16 @@ function PhotoGallery({ photos, onDelete, onAdd }) {
       </div>
       {viewerIdx !== null && (
         <ImageLightbox src={photos[viewerIdx].data} onClose={() => setViewerIdx(null)} />
+      )}
+      {confirmDeleteId && (
+        <ConfirmDeleteModal
+          message="¿Seguro que quieres eliminar esta foto?"
+          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={() => {
+            onDelete(confirmDeleteId);
+            setConfirmDeleteId(null);
+          }}
+        />
       )}
     </div>
   );
@@ -509,6 +556,8 @@ function PartCard({ part, onUpdate, onDelete }) {
   const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? part.supplier : "");
   const [viewerOpen, setViewerOpen] = useState(false);
   const [listeningName, setListeningName] = useState(false);
+  const [confirmDeletePart, setConfirmDeletePart] = useState(false);
+  const [confirmDeletePhoto, setConfirmDeletePhoto] = useState(false);
   const nameRecognitionRef = useRef(null);
   const partRef = useRef(part);
   useEffect(() => {
@@ -581,21 +630,33 @@ function PartCard({ part, onUpdate, onDelete }) {
               type="button"
               onClick={toggleNameDictation}
               aria-label={listeningName ? "Detener dictado" : "Dictar nombre de la pieza"}
-              className={`flex-shrink-0 p-1.5 rounded-md ${
-                listeningName ? "text-red-600 animate-pulse" : "text-amber-600 hover:text-amber-700"
+              className={`flex-shrink-0 p-2 rounded-lg border-2 ${
+                listeningName
+                  ? "bg-red-600 text-white border-red-600 animate-pulse"
+                  : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
               }`}
             >
-              {listeningName ? <MicOff size={19} /> : <Mic size={19} />}
+              {listeningName ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
           )}
           <button
-            onClick={() => onDelete(part.id)}
+            onClick={() => setConfirmDeletePart(true)}
             aria-label="Eliminar pieza"
             className="text-black hover:text-red-500 flex-shrink-0 p-1.5"
           >
             <Trash2 size={20} />
           </button>
         </div>
+        {confirmDeletePart && (
+          <ConfirmDeleteModal
+            message="¿Seguro que quieres eliminar esta pieza?"
+            onCancel={() => setConfirmDeletePart(false)}
+            onConfirm={() => {
+              onDelete(part.id);
+              setConfirmDeletePart(false);
+            }}
+          />
+        )}
 
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0">
@@ -608,7 +669,7 @@ function PartCard({ part, onUpdate, onDelete }) {
                   className="w-24 h-24 object-cover rounded-md border border-stone-300 cursor-pointer"
                 />
                 <button
-                  onClick={() => onUpdate({ ...part, photo: null })}
+                  onClick={() => setConfirmDeletePhoto(true)}
                   aria-label="Eliminar foto de la pieza"
                   className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
                 >
@@ -616,6 +677,16 @@ function PartCard({ part, onUpdate, onDelete }) {
                 </button>
                 {viewerOpen && (
                   <ImageLightbox src={part.photo.data} onClose={() => setViewerOpen(false)} />
+                )}
+                {confirmDeletePhoto && (
+                  <ConfirmDeleteModal
+                    message="¿Seguro que quieres eliminar esta foto?"
+                    onCancel={() => setConfirmDeletePhoto(false)}
+                    onConfirm={() => {
+                      onUpdate({ ...part, photo: null });
+                      setConfirmDeletePhoto(false);
+                    }}
+                  />
                 )}
               </div>
             ) : (
@@ -833,9 +904,11 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
         </button>
         <div className="flex-1 min-w-0">
           <p className="font-semibold truncate uppercase">
-            {localCar.brand} {localCar.model || ""}
+            {localCar.clientName || "Sin nombre"}
           </p>
-          <p className="text-xs text-white/80 tracking-wide uppercase">{localCar.plate}</p>
+          {localCar.clientPhone && (
+            <p className="text-xs text-white/80 tracking-wide">{localCar.clientPhone}</p>
+          )}
         </div>
         {localCar.status === "terminado" ? (
           <span className="flex items-center gap-1 text-xs font-medium bg-green-500/20 text-green-300 px-2.5 py-1 rounded-full border border-green-500/30 uppercase">
@@ -870,44 +943,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3">
             Vehículo
           </h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-semibold text-black">Marca</label>
-              <input
-                value={localCar.brand}
-                onChange={(e) => patch({ brand: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black">Modelo</label>
-              <input
-                value={localCar.model}
-                onChange={(e) => patch({ model: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black">Matrícula</label>
-              <input
-                value={localCar.plate}
-                onChange={(e) => patch({ plate: e.target.value.toUpperCase() })}
-                className="w-full mt-1 px-3 py-3 text-base font-bold text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-black flex items-center gap-1">
-                <Gauge size={14} /> Kilómetros
-              </label>
-              <input
-                type="number"
-                value={localCar.km}
-                onChange={(e) => patch({ km: e.target.value })}
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
-          </div>
-          <div className="mt-4">
+          <div>
             <h3 className="text-sm font-semibold text-black mb-2">Fotos del vehículo</h3>
             <PhotoGallery photos={localCar.photos} onDelete={deletePhoto} onAdd={addPhoto} />
           </div>
@@ -980,38 +1016,35 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
         </section>
 
         <section className="bg-white rounded-xl border-2 border-stone-200 p-5">
-          <h2 className="text-sm font-bold text-black uppercase tracking-wide mb-3 flex items-center gap-1.5">
-            <ClipboardList size={16} /> Mano de obra y trabajo realizado
-          </h2>
-          <div className="grid grid-cols-[1fr_1.6fr] gap-3 mb-3">
-            <div>
-              <label className="text-sm font-semibold text-black">Horas estimadas</label>
-              <input
-                type="number"
-                step="0.5"
-                value={localCar.laborHours}
-                onChange={(e) => patch({ laborHours: e.target.value })}
-                placeholder="0"
-                className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
-              />
-            </div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold text-black uppercase tracking-wide flex items-center gap-1.5">
+              <ClipboardList size={16} /> Mano de obra y trabajo realizado
+            </h2>
             {speechSupported && (
-              <div className="flex flex-col justify-end">
-                <button
-                  type="button"
-                  onClick={toggleDictation}
-                  aria-label={listening ? "Detener dictado" : "Dictar por voz"}
-                  className={`w-full flex items-center justify-center gap-1.5 text-sm font-bold px-2 py-3 rounded-lg border-2 whitespace-nowrap transition ${
-                    listening
-                      ? "bg-red-600 text-white border-red-600 animate-pulse"
-                      : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                  }`}
-                >
-                  {listening ? <MicOff size={16} className="flex-shrink-0" /> : <Mic size={16} className="flex-shrink-0" />}
-                  {listening ? "GRABANDO..." : "DICTAR POR VOZ"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={toggleDictation}
+                aria-label={listening ? "Detener dictado" : "Dictar por voz"}
+                className={`flex-shrink-0 p-2 rounded-lg border-2 ${
+                  listening
+                    ? "bg-red-600 text-white border-red-600 animate-pulse"
+                    : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                }`}
+              >
+                {listening ? <MicOff size={18} /> : <Mic size={18} />}
+              </button>
             )}
+          </div>
+          <div className="mb-3">
+            <label className="text-sm font-semibold text-black">Horas estimadas</label>
+            <input
+              type="number"
+              step="0.5"
+              value={localCar.laborHours}
+              onChange={(e) => patch({ laborHours: e.target.value })}
+              placeholder="0"
+              className="w-full mt-1 px-3 py-3 text-base font-medium text-black rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
+            />
           </div>
           {dictationError && (
             <p className="text-sm font-semibold text-red-600 mb-2">{dictationError}</p>
@@ -1098,6 +1131,7 @@ function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
   const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
   const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? photo.supplier : "");
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [confirmDeletePhoto, setConfirmDeletePhoto] = useState(false);
 
   return (
     <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden p-3">
@@ -1110,7 +1144,7 @@ function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
             className="w-20 h-20 object-cover rounded-md border border-stone-300 cursor-pointer"
           />
           <button
-            onClick={() => onDelete(photo.id)}
+            onClick={() => setConfirmDeletePhoto(true)}
             aria-label="Eliminar foto"
             className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
           >
@@ -1118,6 +1152,16 @@ function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
           </button>
           {viewerOpen && (
             <ImageLightbox src={photo.data} onClose={() => setViewerOpen(false)} />
+          )}
+          {confirmDeletePhoto && (
+            <ConfirmDeleteModal
+              message="¿Seguro que quieres eliminar esta foto?"
+              onCancel={() => setConfirmDeletePhoto(false)}
+              onConfirm={() => {
+                onDelete(photo.id);
+                setConfirmDeletePhoto(false);
+              }}
+            />
           )}
         </div>
 
@@ -1557,7 +1601,6 @@ function App() {
   const [query, setQuery] = useState("");
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
-  const [confirmExit, setConfirmExit] = useState(false);
   const openIdRef = useRef(openId);
 
   useEffect(() => {
@@ -1566,28 +1609,19 @@ function App() {
 
   // Gestión del botón "atrás" del navegador/móvil:
   // - Si hay un vehículo abierto, "atrás" vuelve a la lista principal.
-  // - Si estamos en la lista principal, "atrás" pide confirmación antes de salir.
-  const exitingRef = useRef(false);
-
+  // - Si estamos en la lista principal, "atrás" sale de la app directamente.
   useEffect(() => {
     // Estado base para poder interceptar el "atrás" incluso en la pantalla inicial.
     window.history.pushState({ screen: "list" }, "");
 
     const handlePopState = () => {
-      if (exitingRef.current) {
-        // El usuario ya confirmó que quiere salir: dejamos que el navegador
-        // continúe hacia atrás de verdad, sin volver a interceptarlo.
-        return;
-      }
       if (openIdRef.current) {
         // Estábamos en el detalle: volvemos a la lista y reponemos el estado base.
         setOpenId(null);
         window.history.pushState({ screen: "list" }, "");
-      } else {
-        // Estábamos en la lista: preguntamos antes de salir.
-        setConfirmExit(true);
-        window.history.pushState({ screen: "list" }, "");
       }
+      // Si ya estábamos en la lista, no interceptamos: el navegador sigue
+      // hacia atrás con normalidad y la app se cierra/sale sin preguntar.
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -1601,19 +1635,6 @@ function App() {
 
   const closeCarDetail = () => {
     window.history.back();
-  };
-
-  const confirmExitApp = () => {
-    setConfirmExit(false);
-    exitingRef.current = true;
-    // Intento directo de cerrar la pestaña (solo funciona si el navegador lo permite,
-    // por ejemplo si esta pestaña fue abierta por un enlace desde otra app).
-    window.close();
-    // Si el navegador no permite cerrarla (lo habitual), retrocedemos de verdad
-    // en el historial para salir del sitio, ahora que ya no se interceptará.
-    setTimeout(() => {
-      window.history.back();
-    }, 50);
   };
 
   const loadData = async ({ silent } = {}) => {
@@ -1737,10 +1758,6 @@ function App() {
   const handleCreate = async () => {
     const newCar = {
       id: uid(),
-      brand: "",
-      model: "",
-      plate: "",
-      km: "",
       clientName: "",
       clientPhone: "",
       parts: [],
@@ -1822,29 +1839,6 @@ function App() {
           setQuery={setQuery}
           onRequestNotifications={requestNotificationPermission}
         />
-      )}
-
-      {confirmExit && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl p-5 max-w-sm w-full text-center shadow-xl">
-            <AlertCircle className="mx-auto text-amber-500 mb-2" size={28} />
-            <p className="text-black font-bold mb-4">¿Seguro que quieres salir?</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setConfirmExit(false)}
-                className="flex-1 py-2.5 rounded-lg border-2 border-stone-300 text-black font-bold uppercase"
-              >
-                No
-              </button>
-              <button
-                onClick={confirmExitApp}
-                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white font-bold uppercase"
-              >
-                Sí
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {saveStatus !== "idle" && (
