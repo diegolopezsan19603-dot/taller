@@ -1218,6 +1218,8 @@ function CarListItem({ car, onOpen }) {
         year: "numeric",
       })
     : null;
+  const toOrderCount = (car.parts || []).filter((p) => p.status === "pedir").length;
+  const toReceiveCount = (car.parts || []).filter((p) => p.status === "pedido").length;
 
   return (
     <button
@@ -1230,6 +1232,20 @@ function CarListItem({ car, onOpen }) {
         ) : (
           <div className="w-full h-full flex items-center justify-center text-black">
             <Car size={40} />
+          </div>
+        )}
+        {(toOrderCount > 0 || toReceiveCount > 0) && (
+          <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
+            {toOrderCount > 0 && (
+              <span className="text-[11px] font-bold uppercase bg-red-100 text-red-700 border border-red-300 px-2 py-1 rounded-full shadow-sm">
+                {toOrderCount} {toOrderCount === 1 ? "pieza" : "piezas"} por pedir
+              </span>
+            )}
+            {toReceiveCount > 0 && (
+              <span className="text-[11px] font-bold uppercase bg-blue-100 text-blue-700 border border-blue-300 px-2 py-1 rounded-full shadow-sm">
+                {toReceiveCount} {toReceiveCount === 1 ? "pieza" : "piezas"} por recibir
+              </span>
+            )}
           </div>
         )}
         {(entryDate || car.mechanic) && (
@@ -1425,13 +1441,40 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
     .filter((c) => c.status === "terminado" && c.finishedAt)
     .sort((a, b) => b.finishedAt - a.finishedAt);
 
+  const formatPartsList = (parts) => {
+    const named = parts.filter((p) => p.name && p.name.trim());
+    const unnamedCount = parts.length - named.length;
+    const items = named.map((p, i) => (
+      <React.Fragment key={p.id || i}>
+        {i > 0 && ", "}
+        <span className="font-bold">{p.name.trim()}</span>
+        {p.supplier && p.supplier.trim() && ` (${p.supplier.trim()})`}
+      </React.Fragment>
+    ));
+    if (unnamedCount > 0) {
+      items.push(
+        <React.Fragment key="unnamed">
+          {named.length > 0 && ", "}
+          <span className="font-bold">
+            {unnamedCount === 1 ? "1 PIEZA" : `${unnamedCount} PIEZAS`}
+          </span>
+        </React.Fragment>
+      );
+    }
+    return items;
+  };
+
   const pendingParts = cars
-    .map((c) => ({
-      id: c.id,
-      orderCode: c.orderCode || "SIN CÓDIGO",
-      count: (c.parts || []).filter((p) => p.status === "pedir" || p.status === "pedido").length,
-    }))
-    .filter((c) => c.count > 0);
+    .map((c) => {
+      const parts = c.parts || [];
+      return {
+        id: c.id,
+        orderCode: c.orderCode || "SIN CÓDIGO",
+        toOrder: parts.filter((p) => p.status === "pedir"),
+        toReceive: parts.filter((p) => p.status === "pedido"),
+      };
+    })
+    .filter((c) => c.toOrder.length > 0 || c.toReceive.length > 0);
 
   const formatTime = (ts) =>
     new Date(ts).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
@@ -1495,12 +1538,21 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
                   <button
                     key={c.id}
                     onClick={() => onOpenCar(c.id)}
-                    className="w-full text-left bg-white rounded-lg border-2 border-stone-200 px-3 py-2.5 hover:border-amber-400 active:scale-[0.99] transition"
+                    className="w-full text-left bg-white rounded-lg border-2 border-stone-200 px-3 py-2.5 hover:border-amber-400 active:scale-[0.99] transition space-y-1"
                   >
-                    <p className="text-sm font-medium text-black uppercase leading-snug">
-                      {c.count} {c.count === 1 ? "pieza" : "piezas"} por pedir/recibir para{" "}
-                      <span className="font-bold">{c.orderCode}</span>
-                    </p>
+                    <p className="text-sm font-bold text-black uppercase">{c.orderCode}</p>
+                    {c.toOrder.length > 0 && (
+                      <p className="text-sm text-black uppercase leading-snug">
+                        Falta por <span className="text-red-600 font-bold">pedir</span>:{" "}
+                        {formatPartsList(c.toOrder)}
+                      </p>
+                    )}
+                    {c.toReceive.length > 0 && (
+                      <p className="text-sm text-black uppercase leading-snug">
+                        Falta por <span className="text-blue-600 font-bold">recibir</span>:{" "}
+                        {formatPartsList(c.toReceive)}
+                      </p>
+                    )}
                   </button>
                 ))}
               </div>
