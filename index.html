@@ -1363,7 +1363,7 @@ function ReturnsSection() {
 /* ---------------------------------------------------------
    Tarjeta resumen de vehículo (lista)
 --------------------------------------------------------- */
-function CarListItem({ car, onOpen }) {
+function CarListItem({ car, onOpen, selectionMode, selected, onToggleSelect, onLongPress }) {
   const thumb = car.photos && car.photos[0];
   const entryDate = car.createdAt
     ? new Date(car.createdAt).toLocaleDateString("es-ES", {
@@ -1375,15 +1375,63 @@ function CarListItem({ car, onOpen }) {
   const toOrderCount = (car.parts || []).filter((p) => p.status === "pedir").length;
   const toReceiveCount = (car.parts || []).filter((p) => p.status === "pedido").length;
 
+  const longPressTimerRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const startLongPress = () => {
+    longPressTriggeredRef.current = false;
+    clearLongPressTimer();
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      onLongPress && onLongPress(car.id);
+    }, 500);
+  };
+
+  const handleClick = () => {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    if (selectionMode) {
+      onToggleSelect && onToggleSelect(car.id);
+    } else {
+      onOpen(car.id);
+    }
+  };
+
   return (
     <button
-      onClick={() => onOpen(car.id)}
-      className={`w-full text-left bg-white rounded-xl overflow-hidden active:scale-[0.99] transition ${
-        car.noted
+      onClick={handleClick}
+      onTouchStart={startLongPress}
+      onTouchEnd={clearLongPressTimer}
+      onTouchMove={clearLongPressTimer}
+      onMouseDown={startLongPress}
+      onMouseUp={clearLongPressTimer}
+      onMouseLeave={clearLongPressTimer}
+      className={`relative w-full text-left bg-white rounded-xl overflow-hidden active:scale-[0.99] transition ${
+        selected
+          ? "border-[5px] border-amber-500"
+          : car.noted
           ? "border-[5px] border-green-500"
           : "border border-stone-200 hover:border-stone-300"
       }`}
     >
+      {selectionMode && (
+        <div
+          className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-full border-2 flex items-center justify-center shadow ${
+            selected ? "bg-amber-500 border-amber-500" : "bg-white/90 border-stone-400"
+          }`}
+        >
+          {selected && <Check size={15} className="text-white" />}
+        </div>
+      )}
       <div className="relative w-full h-48 bg-stone-100">
         {thumb ? (
           <img src={thumb.data} alt="" className="w-full h-full object-cover" />
@@ -1394,12 +1442,12 @@ function CarListItem({ car, onOpen }) {
         )}
         {(toOrderCount > 0 || toReceiveCount > 0) && (
           <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
-            {toOrderCount > 0 && (
+            {toOrderCount > 0 && !selectionMode && (
               <span className="text-[11px] font-bold uppercase bg-red-100 text-red-700 border border-red-300 px-2 py-1 rounded-full shadow-sm">
                 {toOrderCount} {toOrderCount === 1 ? "pieza" : "piezas"} por pedir
               </span>
             )}
-            {toReceiveCount > 0 && (
+            {toReceiveCount > 0 && !selectionMode && (
               <span className="text-[11px] font-bold uppercase bg-blue-100 text-blue-700 border border-blue-300 px-2 py-1 rounded-full shadow-sm">
                 {toReceiveCount} {toReceiveCount === 1 ? "pieza" : "piezas"} por recibir
               </span>
@@ -1457,15 +1505,25 @@ function CarListScreen({
   filter,
   setFilter,
   onOpenSidebar,
+  onDeleteMultiple,
 }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
 
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", handleChange);
     return () => document.removeEventListener("fullscreenchange", handleChange);
   }, []);
+
+  useEffect(() => {
+    // Sale del modo selección si se cambia de pestaña
+    setSelectionMode(false);
+    setSelectedIds([]);
+  }, [filter]);
 
   const toggleFullscreen = async () => {
     try {
@@ -1488,6 +1546,29 @@ function CarListScreen({
 
   const indicatorHeight = refreshing ? 44 : pullDistance;
 
+  const startSelection = (id) => {
+    setSelectionMode(true);
+    setSelectedIds([id]);
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const cancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds([]);
+  };
+
+  const confirmDeleteSelected = async () => {
+    await onDeleteMultiple(selectedIds);
+    setConfirmBulkDelete(false);
+    setSelectionMode(false);
+    setSelectedIds([]);
+  };
+
   return (
     <div className="min-h-screen bg-stone-100">
       <div
@@ -1501,37 +1582,58 @@ function CarListScreen({
         />
       </div>
       <div className="sticky top-0 z-10 bg-stone-900 text-white px-4 pt-4 pb-3 shadow">
-        <div className="flex items-center justify-between mb-3">
-          <button
-            onClick={onOpenSidebar}
-            aria-label="Historial del taller"
-            className="flex items-center gap-2 active:scale-95 transition"
-          >
-            <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
-              <Wrench size={16} className="text-stone-900" />
-            </div>
-            <div className="text-left">
-              <p className="font-semibold leading-tight uppercase">Taller</p>
-              <p className="text-[11px] text-white/80 leading-tight flex items-center gap-1 uppercase">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full inline-block ${
-                    FIREBASE_CONFIGURED ? "bg-green-500" : "bg-amber-500"
-                  }`}
-                />
-                {FIREBASE_CONFIGURED ? "Sincronizado" : "Solo este dispositivo"}
-              </p>
-            </div>
-          </button>
-          <div className="flex items-center gap-3">
+        {selectionMode ? (
+          <div className="flex items-center justify-between mb-3">
             <button
-              onClick={toggleFullscreen}
-              aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
-              className="text-white"
+              onClick={cancelSelection}
+              className="text-sm font-bold uppercase text-white/90 px-2 py-1.5"
             >
-              {isFullscreen ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
+              Cancelar
+            </button>
+            <p className="text-sm font-bold uppercase">
+              {selectedIds.length} seleccionado{selectedIds.length === 1 ? "" : "s"}
+            </p>
+            <button
+              onClick={() => setConfirmBulkDelete(true)}
+              disabled={selectedIds.length === 0}
+              className="flex items-center gap-1.5 text-sm font-bold uppercase text-red-300 px-2 py-1.5 disabled:opacity-40"
+            >
+              <Trash2 size={16} /> Eliminar
             </button>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between mb-3">
+            <button
+              onClick={onOpenSidebar}
+              aria-label="Historial del taller"
+              className="flex items-center gap-2 active:scale-95 transition"
+            >
+              <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
+                <Wrench size={16} className="text-stone-900" />
+              </div>
+              <div className="text-left">
+                <p className="font-semibold leading-tight uppercase">Taller</p>
+                <p className="text-[11px] text-white/80 leading-tight flex items-center gap-1 uppercase">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full inline-block ${
+                      FIREBASE_CONFIGURED ? "bg-green-500" : "bg-amber-500"
+                    }`}
+                  />
+                  {FIREBASE_CONFIGURED ? "Sincronizado" : "Solo este dispositivo"}
+                </p>
+              </div>
+            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleFullscreen}
+                aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+                className="text-white"
+              >
+                {isFullscreen ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-1.5">
           <button
@@ -1575,6 +1677,12 @@ function CarListScreen({
               </button>
             )}
 
+            {filter === "terminado" && filtered.length > 0 && !selectionMode && (
+              <p className="text-xs font-medium text-stone-500 uppercase text-center mb-3">
+                Mantén pulsada una ficha para seleccionar varias
+              </p>
+            )}
+
             {filtered.length === 0 ? (
               <div className="text-center py-12">
                 <AlertCircle size={28} className="mx-auto text-black mb-2" />
@@ -1587,13 +1695,28 @@ function CarListScreen({
             ) : (
               <div className="space-y-2.5">
                 {filtered.map((car) => (
-                  <CarListItem key={car.id} car={car} onOpen={onOpen} />
+                  <CarListItem
+                    key={car.id}
+                    car={car}
+                    onOpen={onOpen}
+                    selectionMode={filter === "terminado" && selectionMode}
+                    selected={selectedIds.includes(car.id)}
+                    onToggleSelect={toggleSelect}
+                    onLongPress={filter === "terminado" ? startSelection : undefined}
+                  />
                 ))}
               </div>
             )}
           </>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        message={`¿Eliminar ${selectedIds.length} ficha${selectedIds.length === 1 ? "" : "s"} definitivamente?`}
+        onConfirm={confirmDeleteSelected}
+        onCancel={() => setConfirmBulkDelete(false)}
+      />
     </div>
   );
 }
@@ -1645,6 +1768,9 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
   const formatTime = (ts) =>
     new Date(ts).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 
+  const formatDate = (ts) =>
+    new Date(ts).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+
   return (
     <>
       {open && (
@@ -1683,7 +1809,8 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
                   >
                     <p className="text-sm font-medium text-black uppercase leading-snug">
                       {(c.mechanic || "SIN ASIGNAR")} completó un{" "}
-                      <span className="font-bold">{c.orderCode || "SIN CÓDIGO"}</span> a las{" "}
+                      <span className="font-bold">{c.orderCode || "SIN CÓDIGO"}</span> el{" "}
+                      {formatDate(c.finishedAt)} a las{" "}
                       {formatTime(c.finishedAt)}
                     </p>
                   </button>
@@ -1974,6 +2101,14 @@ function App() {
     await persistIndex(updated);
   };
 
+  const handleDeleteMultiple = async (ids) => {
+    const idSet = new Set(ids);
+    const updated = cars.filter((c) => !idSet.has(c.id));
+    setCars(updated);
+    if (openId && idSet.has(openId)) setOpenId(null);
+    await persistIndex(updated);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-100">
@@ -2020,6 +2155,7 @@ function App() {
           filter={filter}
           setFilter={setFilter}
           onOpenSidebar={() => setSidebarOpen(true)}
+          onDeleteMultiple={handleDeleteMultiple}
         />
       )}
 
