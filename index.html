@@ -197,6 +197,14 @@ async function storageSet(key, value) {
   await window.storage.set(key, JSON.stringify(value));
   return true;
 }
+async function storageDelete(key) {
+  try {
+    await window.storage.delete(key);
+  } catch (err) {
+    console.error(`Error borrando "${key}":`, err);
+  }
+  return true;
+}
 
 /* ---------------------------------------------------------
    Compresión de imágenes a base64
@@ -848,6 +856,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
   const [localCar, setLocalCar] = useState(car);
   const carRef = useRef(car);
   const onUpdateRef = useRef(onUpdate);
+  const saveTimeoutRef = useRef(null);
   const [listening, setListening] = useState(false);
   const [dictationError, setDictationError] = useState(null);
   const recognitionRef = useRef(null);
@@ -862,13 +871,50 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
     onUpdateRef.current = onUpdate;
   }, [onUpdate]);
 
+  // Al desmontar (p.ej. al volver atrás), si hay un guardado pendiente,
+  // lo lanzamos ya mismo para no perder el último cambio.
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        onUpdateRef.current(carRef.current);
+      }
+    };
+  }, []);
+
   const patch = useCallback(
     (fields) => {
       const updated = { ...localCar, ...fields, updatedAt: Date.now() };
       setLocalCar(updated);
-      onUpdate(updated);
+
+      // Debounce: la UI se actualiza al instante, pero el guardado real
+      // (a Firestore) espera a que el usuario deje de escribir/cambiar
+      // cosas durante 600ms, para no mandar una escritura completa del
+      // coche (con fotos incluidas) en cada pulsación de tecla.
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        saveTimeoutRef.current = null;
+        onUpdateRef.current(carRef.current);
+      }, 600);
     },
-    [localCar, onUpdate]
+    [localCar]
+  );
+
+  // Para cambios que deben guardarse YA (no esperar el debounce): p.ej.
+  // marcar como terminado, borrar una pieza, etc. Usa esto en vez de
+  // patch() cuando el cambio sea "de un solo golpe" y quieras confirmación
+  // inmediata.
+  const patchNow = useCallback(
+    (fields) => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const updated = { ...localCar, ...fields, updatedAt: Date.now() };
+      setLocalCar(updated);
+      onUpdateRef.current(updated);
+    },
+    [localCar]
   );
 
   const toggleDictation = () => {
@@ -957,21 +1003,21 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
     patch({ parts: localCar.parts.map((p) => (p.id === part.id ? part : p)) });
   };
   const deletePart = (id) => {
-    patch({ parts: localCar.parts.filter((p) => p.id !== id) });
+    patchNow({ parts: localCar.parts.filter((p) => p.id !== id) });
   };
 
   const addPhoto = (data) => {
-    patch({ photos: [...localCar.photos, { id: uid(), data }] });
+    patchNow({ photos: [...localCar.photos, { id: uid(), data }] });
   };
   const deletePhoto = (id) => {
-    patch({ photos: localCar.photos.filter((p) => p.id !== id) });
+    patchNow({ photos: localCar.photos.filter((p) => p.id !== id) });
   };
 
   const addClientPhoto = (data) => {
-    patch({ clientPhotos: [...(localCar.clientPhotos || []), { id: uid(), data }] });
+    patchNow({ clientPhotos: [...(localCar.clientPhotos || []), { id: uid(), data }] });
   };
   const deleteClientPhoto = (id) => {
-    patch({ clientPhotos: (localCar.clientPhotos || []).filter((p) => p.id !== id) });
+    patchNow({ clientPhotos: (localCar.clientPhotos || []).filter((p) => p.id !== id) });
   };
 
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1162,7 +1208,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
         <div className="flex flex-col gap-2 pb-6">
           {localCar.status !== "terminado" ? (
             <button
-              onClick={() => patch({ status: "terminado", finishedAt: Date.now() })}
+              onClick={() => patchNow({ status: "terminado", finishedAt: Date.now() })}
               className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl bg-green-600 text-white text-lg font-bold uppercase hover:bg-green-700 active:scale-[0.98] transition"
             >
               <Check size={20} /> Marcar como terminado
@@ -1170,13 +1216,13 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           ) : (
             <>
               <button
-                onClick={() => patch({ status: "pendiente", finishedAt: null, noted: false })}
+                onClick={() => patchNow({ status: "pendiente", finishedAt: null, noted: false })}
                 className="w-full flex items-center justify-center gap-2 py-4 rounded-xl bg-stone-200 text-stone-700 text-base font-bold uppercase hover:bg-stone-300 active:scale-[0.98] transition"
               >
                 <Clock size={18} /> Reabrir
               </button>
               <button
-                onClick={() => patch({ noted: !localCar.noted })}
+                onClick={() => patchNow({ noted: !localCar.noted })}
                 className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold uppercase border-2 active:scale-[0.98] transition ${
                   localCar.noted
                     ? "bg-green-50 text-green-700 border-green-500"
@@ -2099,6 +2145,7 @@ function App() {
     setCars(updated);
     setOpenId(null);
     await persistIndex(updated);
+    await storageDelete(carKey(id));
   };
 
   const handleDeleteMultiple = async (ids) => {
@@ -2107,6 +2154,7 @@ function App() {
     setCars(updated);
     if (openId && idSet.has(openId)) setOpenId(null);
     await persistIndex(updated);
+    await Promise.all(ids.map((id) => storageDelete(carKey(id))));
   };
 
   if (loading) {
