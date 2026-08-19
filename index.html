@@ -46,13 +46,13 @@
 <div id="root"></div>
 
 <script type="text/babel" data-type="module" data-presets="react">
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import {
   User, Car, Phone, Gauge, Camera, X, Plus, Check, Package,
   Wrench, ClipboardList, ChevronLeft, Trash2, Edit3, Clock,
-  CheckCircle2, AlertCircle, RefreshCw, Maximize2, Minimize2, Mic, MicOff, Share2, RotateCcw
+  CheckCircle2, AlertCircle, RefreshCw, Maximize2, Minimize2, Mic, MicOff, Share2
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -185,6 +185,33 @@ window.storage = firestoreAPI || localStorageAPI;
 --------------------------------------------------------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+/* ---------------------------------------------------------
+   Evita que un guardado se quede "colgado" para siempre.
+
+   Con poca cobertura de wifi/datos, Firestore puede quedarse
+   esperando la confirmación del servidor sin límite de tiempo:
+   la app se queda mostrando "Guardando..." indefinidamente, sin
+   pasar nunca a "Guardado" ni a "Error". Con este límite, si no
+   hay respuesta en 12 segundos, se avisa de que no hay conexión
+   en vez de dejar al usuario sin saber si se guardó o no.
+--------------------------------------------------------- */
+const SAVE_TIMEOUT_MS = 16000;
+function withTimeout(promise, ms = SAVE_TIMEOUT_MS, message = "Sin respuesta del servidor. Comprueba tu conexión.") {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 async function storageGet(key) {
   try {
     const r = await window.storage.get(key);
@@ -194,12 +221,12 @@ async function storageGet(key) {
   }
 }
 async function storageSet(key, value) {
-  await window.storage.set(key, JSON.stringify(value));
+  await withTimeout(window.storage.set(key, JSON.stringify(value)));
   return true;
 }
 async function storageDelete(key) {
   try {
-    await window.storage.delete(key);
+    await withTimeout(window.storage.delete(key));
   } catch (err) {
     console.error(`Error borrando "${key}":`, err);
   }
@@ -236,6 +263,55 @@ function fileToCompressedDataUrl(file, maxDim = 1000, quality = 0.7) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+/* ---------------------------------------------------------
+   Componente: input/textarea que convierte a mayúsculas sin
+   que el cursor salte al final al escribir en medio del texto.
+
+   Por qué ocurría: al escribir una letra en minúscula en medio
+   de una palabra, el valor completo se sustituía por su versión
+   en mayúsculas. Aunque la posición (índice) del cursor no
+   cambia, algunos navegadores (sobre todo en móvil, con el
+   corrector/autocompletado activo) pierden la selección al
+   recibir un valor "distinto" y la mandan al final.
+
+   Solución: guardamos en qué posición estaba el cursor justo
+   antes de aplicar el cambio y, una vez React actualiza el
+   value en el DOM, la restauramos explícitamente.
+--------------------------------------------------------- */
+function UppercaseField({ as = "input", value, onChange, inputRef, ...props }) {
+  const localRef = useRef(null);
+  const cursorRef = useRef(null);
+
+  const setRefs = (node) => {
+    localRef.current = node;
+    if (typeof inputRef === "function") inputRef(node);
+    else if (inputRef) inputRef.current = node;
+  };
+
+  const handleChange = (e) => {
+    const start = e.target.selectionStart;
+    const end = e.target.selectionEnd;
+    const upper = e.target.value.toUpperCase();
+    cursorRef.current = { start, end };
+    onChange(upper);
+  };
+
+  useEffect(() => {
+    if (cursorRef.current && localRef.current) {
+      const { start, end } = cursorRef.current;
+      cursorRef.current = null;
+      // Solo tiene sentido restaurar la selección si el elemento
+      // sigue siendo el que el usuario estaba usando.
+      if (document.activeElement === localRef.current) {
+        localRef.current.setSelectionRange(start, end);
+      }
+    }
+  });
+
+  const Tag = as;
+  return <Tag ref={setRefs} value={value} onChange={handleChange} {...props} />;
 }
 
 /* ---------------------------------------------------------
@@ -351,21 +427,38 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
 }
 
 /* ---------------------------------------------------------
-   Componente: visor de foto ampliada (lightbox simple)
+   Componente: visor de foto ampliada (lightbox)
+   - Recibe TODAS las fotos de la orden (coche, cliente, piezas)
+     mezcladas en un único array, sin separarlas por categoría.
+   - Se desliza con el dedo entre todas ellas.
+   - Si la foto pertenece a una pieza con proveedor asignado,
+     lo muestra arriba mientras se está viendo esa foto.
 --------------------------------------------------------- */
-function ImageLightbox({ src, onClose }) {
+function ImageLightbox({ photos, index, onClose, onIndexChange }) {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const pinchRef = useRef({ active: false, startDist: 0, startScale: 1 });
   const panRef = useRef({ active: false, startX: 0, startY: 0, startTranslate: { x: 0, y: 0 } });
+  const swipeRef = useRef({ active: false, startX: 0, startY: 0, dx: 0 });
   const lastTapRef = useRef(0);
+
+  const current = photos && photos[index];
 
   useEffect(() => {
     setScale(1);
     setTranslate({ x: 0, y: 0 });
-  }, [src]);
+  }, [index]);
 
-  if (!src) return null;
+  if (!current) return null;
+
+  const src = current.data;
+  const supplier = current.supplier;
+
+  const goTo = (newIndex) => {
+    if (!photos.length) return;
+    const clamped = Math.max(0, Math.min(photos.length - 1, newIndex));
+    if (clamped !== index) onIndexChange(clamped);
+  };
 
   const getDistance = (touches) => {
     const dx = touches[0].clientX - touches[1].clientX;
@@ -391,6 +484,12 @@ function ImageLightbox({ src, onClose }) {
           startTranslate: { ...translate },
         };
       } else {
+        swipeRef.current = {
+          active: true,
+          startX: e.touches[0].clientX,
+          startY: e.touches[0].clientY,
+          dx: 0,
+        };
         const now = Date.now();
         if (now - lastTapRef.current < 300) {
           setScale(2.5);
@@ -414,6 +513,14 @@ function ImageLightbox({ src, onClose }) {
         x: panRef.current.startTranslate.x + dx,
         y: panRef.current.startTranslate.y + dy,
       });
+    } else if (e.touches.length === 1 && swipeRef.current.active && scale <= 1) {
+      const dx = e.touches[0].clientX - swipeRef.current.startX;
+      const dy = e.touches[0].clientY - swipeRef.current.startY;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        e.preventDefault();
+        swipeRef.current.dx = dx;
+        setTranslate({ x: dx, y: 0 });
+      }
     }
   };
 
@@ -421,6 +528,14 @@ function ImageLightbox({ src, onClose }) {
     if (e.touches.length < 2) pinchRef.current.active = false;
     if (e.touches.length < 1) panRef.current.active = false;
     if (e.touches.length === 0 && scale < 1.02) {
+      if (swipeRef.current.active) {
+        const dx = swipeRef.current.dx;
+        swipeRef.current.active = false;
+        if (Math.abs(dx) > 60) {
+          if (dx < 0) goTo(index + 1);
+          else goTo(index - 1);
+        }
+      }
       setScale(1);
       setTranslate({ x: 0, y: 0 });
     }
@@ -465,10 +580,32 @@ function ImageLightbox({ src, onClose }) {
         draggable={false}
         style={{
           transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
-          transition: pinchRef.current.active || panRef.current.active ? "none" : "transform 0.15s ease-out",
+          transition: pinchRef.current.active || panRef.current.active || swipeRef.current.active ? "none" : "transform 0.15s ease-out",
         }}
         className="max-w-full max-h-full rounded-lg select-none touch-none"
       />
+
+      {supplier ? (
+        <div
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/15 backdrop-blur-sm text-white text-xs font-bold uppercase tracking-wide px-3 py-1.5 rounded-full border border-white/20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          Proveedor: {supplier}
+        </div>
+      ) : null}
+
+      {photos.length > 1 && (
+        <div
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 text-white/70 text-xs font-medium flex items-center gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span>Desliza con el dedo para ver más fotos</span>
+          <span className="text-white/50">
+            {index + 1}/{photos.length}
+          </span>
+        </div>
+      )}
+
       <button
         className="absolute top-4 left-4 text-white bg-white/10 rounded-full p-2"
         onClick={handleShare}
@@ -525,18 +662,17 @@ function ConfirmDialog({ open, message, onConfirm, onCancel }) {
 /* ---------------------------------------------------------
    Componente: galería de fotos con opción de eliminar
 --------------------------------------------------------- */
-function PhotoGallery({ photos, onDelete, onAdd }) {
-  const [viewerIdx, setViewerIdx] = useState(null);
+function PhotoGallery({ photos, onDelete, onAdd, onOpen }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        {photos.map((p, i) => (
+        {photos.map((p) => (
           <div key={p.id} className="relative group">
             <img
               src={p.data}
               alt=""
-              onClick={() => setViewerIdx(i)}
+              onClick={() => onOpen(p.id)}
               className="w-16 h-16 object-cover rounded-md border border-stone-300 cursor-pointer"
             />
             <button
@@ -554,9 +690,6 @@ function PhotoGallery({ photos, onDelete, onAdd }) {
           </div>
         )}
       </div>
-      {viewerIdx !== null && (
-        <ImageLightbox src={photos[viewerIdx].data} onClose={() => setViewerIdx(null)} />
-      )}
       <ConfirmDialog
         open={confirmDeleteId !== null}
         message="¿Seguro que quieres eliminarlo?"
@@ -641,11 +774,10 @@ const PART_STATES = {
 --------------------------------------------------------- */
 const SUPPLIER_OPTIONS = ["Indalo", "A.R.Vera", "Ad Salas"];
 
-function PartCard({ part, onUpdate, onDelete }) {
+function PartCard({ part, onUpdate, onDelete, onOpenPhoto }) {
   const isCustomSupplier = !!part.supplier && !SUPPLIER_OPTIONS.includes(part.supplier);
   const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
   const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? part.supplier : "");
-  const [viewerOpen, setViewerOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [listeningName, setListeningName] = useState(false);
   const nameRecognitionRef = useRef(null);
@@ -712,10 +844,11 @@ function PartCard({ part, onUpdate, onDelete }) {
     <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden">
       <div className="p-3.5">
         <div className="flex items-start gap-2 mb-2.5">
-          <textarea
-            ref={nameTextareaRef}
+          <UppercaseField
+            as="textarea"
+            inputRef={nameTextareaRef}
             value={part.name}
-            onChange={(e) => onUpdate({ ...part, name: e.target.value.toUpperCase() })}
+            onChange={(val) => onUpdate({ ...part, name: val })}
             placeholder="NOMBRE DE LA PIEZA"
             rows={1}
             onInput={(e) => {
@@ -754,7 +887,7 @@ function PartCard({ part, onUpdate, onDelete }) {
                 <img
                   src={part.photo.data}
                   alt=""
-                  onClick={() => setViewerOpen(true)}
+                  onClick={() => onOpenPhoto(part.photo.id)}
                   className="w-24 h-24 object-cover rounded-md border border-stone-300 cursor-pointer"
                 />
                 <button
@@ -764,9 +897,6 @@ function PartCard({ part, onUpdate, onDelete }) {
                 >
                   <X size={14} />
                 </button>
-                {viewerOpen && (
-                  <ImageLightbox src={part.photo.data} onClose={() => setViewerOpen(false)} />
-                )}
               </div>
             ) : (
               <div className="w-24 h-24 flex items-center justify-center">
@@ -862,6 +992,25 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
   const recognitionRef = useRef(null);
   const speechSupported =
     typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  // Lista única con TODAS las fotos de la orden (vehículo, cliente y
+  // piezas), en ese orden, para que el visor pueda deslizarse entre
+  // todas ellas sin separarlas por categoría. Cada foto de pieza lleva
+  // su proveedor (si lo tiene) para mostrarlo dentro del visor.
+  const allOrderPhotos = useMemo(() => {
+    const carPhotos = (localCar.photos || []).map((p) => ({ ...p, supplier: null }));
+    const clientPhotos = (localCar.clientPhotos || []).map((p) => ({ ...p, supplier: null }));
+    const partPhotos = (localCar.parts || [])
+      .filter((part) => part.photo)
+      .map((part) => ({ ...part.photo, supplier: part.supplier || null }));
+    return [...carPhotos, ...clientPhotos, ...partPhotos];
+  }, [localCar.photos, localCar.clientPhotos, localCar.parts]);
+
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const openLightboxByPhotoId = (photoId) => {
+    const idx = allOrderPhotos.findIndex((p) => p.id === photoId);
+    if (idx !== -1) setLightboxIndex(idx);
+  };
 
   useEffect(() => setLocalCar(car), [car.id]);
   useEffect(() => {
@@ -1071,9 +1220,9 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               <label className="text-sm font-semibold text-black flex items-center gap-1">
                 <Car size={14} /> Matrícula
               </label>
-              <input
+              <UppercaseField
                 value={localCar.plate}
-                onChange={(e) => patch({ plate: e.target.value.toUpperCase() })}
+                onChange={(val) => patch({ plate: val })}
                 className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
               />
             </div>
@@ -1091,7 +1240,12 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-black mb-2">Fotos del vehículo</h3>
-              <PhotoGallery photos={localCar.photos} onDelete={deletePhoto} onAdd={addPhoto} />
+              <PhotoGallery
+                photos={localCar.photos}
+                onDelete={deletePhoto}
+                onAdd={addPhoto}
+                onOpen={openLightboxByPhotoId}
+              />
             </div>
           </div>
         </section>
@@ -1105,9 +1259,9 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
               <label className="text-sm font-semibold text-black flex items-center gap-1">
                 <User size={14} /> Nombre
               </label>
-              <input
+              <UppercaseField
                 value={localCar.clientName}
-                onChange={(e) => patch({ clientName: e.target.value.toUpperCase() })}
+                onChange={(val) => patch({ clientName: val })}
                 className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500"
               />
             </div>
@@ -1127,6 +1281,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
                 photos={localCar.clientPhotos || []}
                 onDelete={deleteClientPhoto}
                 onAdd={addClientPhoto}
+                onOpen={openLightboxByPhotoId}
               />
             </div>
           </div>
@@ -1156,6 +1311,7 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
                   part={part}
                   onUpdate={updatePart}
                   onDelete={deletePart}
+                  onOpenPhoto={openLightboxByPhotoId}
                 />
               ))}
             </div>
@@ -1196,9 +1352,10 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           {dictationError && (
             <p className="text-sm font-semibold text-red-600 mb-2">{dictationError}</p>
           )}
-          <textarea
+          <UppercaseField
+            as="textarea"
             value={localCar.notes}
-            onChange={(e) => patch({ notes: e.target.value.toUpperCase() })}
+            onChange={(val) => patch({ notes: val })}
             rows={5}
             placeholder="DESCRIBE QUÉ SE HA HECHO AL VEHÍCULO..."
             className="w-full mt-1 px-3 py-3 text-base font-medium text-black uppercase rounded-lg border-2 border-stone-300 outline-none focus:border-amber-500 resize-none"
@@ -1264,143 +1421,14 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-/* ---------------------------------------------------------
-   Sección: Devoluciones (solo fotos, sin más datos asociados)
---------------------------------------------------------- */
-const RETURNS_KEY = "workshop:returns";
-
-function ReturnPhotoCard({ photo, onUpdate, onDelete }) {
-  const isCustomSupplier = !!photo.supplier && !SUPPLIER_OPTIONS.includes(photo.supplier);
-  const [showCustomSupplier, setShowCustomSupplier] = useState(isCustomSupplier);
-  const [customSupplier, setCustomSupplier] = useState(isCustomSupplier ? photo.supplier : "");
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  return (
-    <div className="bg-white rounded-lg border-2 border-stone-200 overflow-hidden p-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 relative">
-          <img
-            src={photo.data}
-            alt=""
-            onClick={() => setViewerOpen(true)}
-            className="w-20 h-20 object-cover rounded-md border border-stone-300 cursor-pointer"
-          />
-          <button
-            onClick={() => setConfirmDelete(true)}
-            aria-label="Eliminar foto"
-            className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-600 text-white flex items-center justify-center shadow"
-          >
-            <X size={13} />
-          </button>
-          {viewerOpen && (
-            <ImageLightbox src={photo.data} onClose={() => setViewerOpen(false)} />
-          )}
-          <ConfirmDialog
-            open={confirmDelete}
-            message="¿Seguro que quieres eliminarlo?"
-            onConfirm={() => {
-              onDelete(photo.id);
-              setConfirmDelete(false);
-            }}
-            onCancel={() => setConfirmDelete(false)}
-          />
-        </div>
-
-        <div className="flex-1 min-w-0 space-y-1.5">
-          <select
-            value={showCustomSupplier ? "Otro" : (photo.supplier || "")}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === "Otro") {
-                setShowCustomSupplier(true);
-                onUpdate({ ...photo, supplier: customSupplier });
-              } else {
-                setShowCustomSupplier(false);
-                onUpdate({ ...photo, supplier: val });
-              }
-            }}
-            className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium bg-white"
-          >
-            <option value="">PEDIDO EN...</option>
-            {SUPPLIER_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt.toUpperCase()}
-              </option>
-            ))}
-            <option value="Otro">OTRO:</option>
-          </select>
-          {showCustomSupplier && (
-            <input
-              autoFocus
-              value={customSupplier}
-              onChange={(e) => {
-                const val = e.target.value.toUpperCase();
-                setCustomSupplier(val);
-                onUpdate({ ...photo, supplier: val });
-              }}
-              placeholder="ESCRIBE EL PROVEEDOR"
-              className="w-full text-sm px-2.5 py-2 rounded-md border-2 border-stone-300 outline-none focus:border-amber-500 uppercase text-black font-medium"
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ReturnsSection() {
-  const [photos, setPhotos] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      const stored = (await storageGet(RETURNS_KEY)) || [];
-      setPhotos(stored);
-      setLoading(false);
-    })();
-  }, []);
-
-  const persist = async (updated) => {
-    setPhotos(updated);
-    await storageSet(RETURNS_KEY, updated);
-  };
-
-  const addPhoto = (data) => {
-    persist([{ id: uid(), data, supplier: "", createdAt: Date.now() }, ...photos]);
-  };
-
-  const updatePhoto = (updated) => {
-    persist(photos.map((p) => (p.id === updated.id ? updated : p)));
-  };
-
-  const deletePhoto = (id) => {
-    persist(photos.filter((p) => p.id !== id));
-  };
-
-  if (loading) {
-    return <p className="text-sm text-black uppercase text-center py-8">Cargando...</p>;
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-bold text-black uppercase tracking-wide">Devoluciones</h2>
-        <PhotoPicker onPick={addPhoto} label="Añadir foto" small />
-      </div>
-      <div className="space-y-2.5">
-        {photos.map((p) => (
-          <ReturnPhotoCard key={p.id} photo={p} onUpdate={updatePhoto} onDelete={deletePhoto} />
-        ))}
-      </div>
-      {photos.length === 0 && (
-        <p className="text-sm font-medium text-black uppercase text-center py-8">
-          Todavía no hay fotos de devoluciones.
-        </p>
+      {lightboxIndex !== null && (
+        <ImageLightbox
+          photos={allOrderPhotos}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       )}
     </div>
   );
@@ -1548,6 +1576,7 @@ function CarListScreen({
   onOpen,
   onCreate,
   onRefresh,
+  dataStale,
   filter,
   setFilter,
   onOpenSidebar,
@@ -1555,6 +1584,7 @@ function CarListScreen({
 }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -1580,6 +1610,15 @@ function CarListScreen({
       }
     } catch (err) {
       console.error("No se pudo cambiar el modo pantalla completa:", err);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setManualRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setManualRefreshing(false);
     }
   };
 
@@ -1671,6 +1710,18 @@ function CarListScreen({
             </button>
             <div className="flex items-center gap-3">
               <button
+                onClick={handleManualRefresh}
+                aria-label={dataStale ? "Hay cambios nuevos, tocar para actualizar" : "Actualizar"}
+                className="relative text-white"
+              >
+                <RefreshCw size={22} className={manualRefreshing ? "animate-spin" : ""} />
+                {dataStale && !manualRefreshing && (
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 border-2 border-stone-900 flex items-center justify-center">
+                    <span className="text-[9px] font-black text-white leading-none">!</span>
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={toggleFullscreen}
                 aria-label={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
                 className="text-white"
@@ -1698,22 +1749,11 @@ function CarListScreen({
           >
             <CheckCircle2 size={12} className="shrink-0" /> Term. ({doneCount})
           </button>
-          <button
-            onClick={() => setFilter("devoluciones")}
-            className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-1 rounded-lg text-[11px] leading-tight font-bold uppercase whitespace-nowrap transition ${
-              filter === "devoluciones" ? "bg-blue-500 text-stone-900" : "bg-stone-800 text-white"
-            }`}
-          >
-            <RotateCcw size={12} className="shrink-0" /> Devol.
-          </button>
         </div>
       </div>
 
       <div className="p-4 max-w-lg mx-auto">
-        {filter === "devoluciones" ? (
-          <ReturnsSection />
-        ) : (
-          <>
+        <>
             {filter !== "terminado" && (
               <button
                 onClick={onCreate}
@@ -1753,8 +1793,7 @@ function CarListScreen({
                 ))}
               </div>
             )}
-          </>
-        )}
+        </>
       </div>
 
       <ConfirmDialog
@@ -1979,6 +2018,10 @@ function LoginGate({ children }) {
 const CARS_INDEX_KEY = "workshop:cars:index";
 const carKey = (id) => `workshop:cars:${id}`;
 const ORDER_COUNTER_KEY = "workshop:orderCounter";
+// Se actualiza cada vez que alguien guarda un cambio. Sirve para saber,
+// sin recargar todo, si otro dispositivo ha modificado algo mientras
+// tú tenías la app abierta.
+const CHANGE_MARKER_KEY = "workshop:lastChangeAt";
 
 function App() {
   const [loading, setLoading] = useState(true);
@@ -1989,6 +2032,16 @@ function App() {
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
   const openIdRef = useRef(openId);
+
+  // Aviso de "hay cambios nuevos": se activa cuando otro dispositivo ha
+  // guardado algo desde la última vez que tú cargaste los datos.
+  const [dataStale, setDataStale] = useState(false);
+  const lastKnownChangeRef = useRef(0);
+
+  // Guarda qué fue lo último que falló al guardar (una ficha de coche o
+  // el índice general), para poder reintentarlo automáticamente en
+  // cuanto vuelva la conexión, en vez de dejar el aviso de error fijo.
+  const lastFailedRef = useRef(null);
 
   useEffect(() => {
     openIdRef.current = openId;
@@ -2048,6 +2101,12 @@ function App() {
       }
 
       setCars(loaded);
+      try {
+        lastKnownChangeRef.current = (await storageGet(CHANGE_MARKER_KEY)) || Date.now();
+      } catch {
+        lastKnownChangeRef.current = Date.now();
+      }
+      setDataStale(false);
       if (!silent) setLoading(false);
     } catch (err) {
       console.error("Error cargando datos:", err);
@@ -2065,6 +2124,31 @@ function App() {
     loadData();
   }, []);
 
+  // Cada cierto tiempo comprueba si otro dispositivo ha guardado algo
+  // que tú todavía no tienes cargado, y si es así activa el aviso en
+  // el botón de recarga (sin recargar solo, para no interrumpir si
+  // estás escribiendo algo).
+  useEffect(() => {
+    if (!FIREBASE_CONFIGURED) return;
+    const interval = setInterval(async () => {
+      try {
+        const marker = (await storageGet(CHANGE_MARKER_KEY)) || 0;
+        if (marker > lastKnownChangeRef.current) setDataStale(true);
+      } catch {
+        // Sin conexión de momento: no pasa nada, se reintentará solo.
+      }
+    }, 20000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const bumpChangeMarker = () => {
+    const now = Date.now();
+    lastKnownChangeRef.current = now;
+    // No esperamos esta escritura: es solo informativa para otros
+    // dispositivos y no debe frenar ni el guardado ni la interfaz.
+    storageSet(CHANGE_MARKER_KEY, now).catch(() => {});
+  };
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleRefresh = useCallback(() => loadData({ silent: true }), []);
@@ -2075,10 +2159,13 @@ function App() {
         CARS_INDEX_KEY,
         list.map((c) => c.id)
       );
+      if (lastFailedRef.current?.type === "index") lastFailedRef.current = null;
+      bumpChangeMarker();
     } catch (err) {
       console.error("Error guardando índice:", err);
       setSaveStatus("error");
       setSaveError((err && err.message) || String(err));
+      lastFailedRef.current = { type: "index", list };
     }
   };
 
@@ -2088,13 +2175,30 @@ function App() {
       await storageSet(carKey(car.id), car);
       setSaveStatus("saved");
       setSaveError(null);
+      if (lastFailedRef.current?.type === "car") lastFailedRef.current = null;
+      bumpChangeMarker();
       setTimeout(() => setSaveStatus("idle"), 1200);
     } catch (err) {
       console.error("Error guardando coche:", err);
       setSaveStatus("error");
       setSaveError((err && err.message) || String(err));
+      lastFailedRef.current = { type: "car", car };
     }
   };
+
+  // En cuanto el dispositivo recupera la conexión, si se había quedado
+  // algo sin guardar, lo reintenta solo, para no dejar el aviso de
+  // "Error al guardar" fijo en pantalla indefinidamente.
+  useEffect(() => {
+    const retryPending = () => {
+      const pending = lastFailedRef.current;
+      if (!pending) return;
+      if (pending.type === "car") saveCar(pending.car);
+      else if (pending.type === "index") persistIndex(pending.list);
+    };
+    window.addEventListener("online", retryPending);
+    return () => window.removeEventListener("online", retryPending);
+  }, []);
 
   const handleCreate = async () => {
     let orderCode = "OT-0001";
@@ -2200,6 +2304,7 @@ function App() {
           onOpen={openCarDetail}
           onCreate={handleCreate}
           onRefresh={handleRefresh}
+          dataStale={dataStale}
           filter={filter}
           setFilter={setFilter}
           onOpenSidebar={() => setSidebarOpen(true)}
@@ -2220,11 +2325,18 @@ function App() {
       {saveStatus !== "idle" && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[92vw]">
           <div
+            onClick={() => {
+              if (saveStatus !== "error") return;
+              const pending = lastFailedRef.current;
+              if (!pending) return;
+              if (pending.type === "car") saveCar(pending.car);
+              else if (pending.type === "index") persistIndex(pending.list);
+            }}
             className={`text-xs font-medium px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 ${
               saveStatus === "saving"
                 ? "bg-stone-800 text-white"
                 : saveStatus === "error"
-                ? "bg-red-600 text-white"
+                ? "bg-red-600 text-white cursor-pointer"
                 : "bg-green-600 text-white"
             }`}
           >
@@ -2237,7 +2349,7 @@ function App() {
             {saveStatus === "error" && (
               <>
                 <AlertCircle size={12} className="flex-shrink-0" />
-                <span className="truncate">Error al guardar: {saveError}</span>
+                <span className="truncate">Error al guardar: {saveError} · Toca para reintentar</span>
               </>
             )}
           </div>
