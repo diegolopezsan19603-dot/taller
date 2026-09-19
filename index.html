@@ -16,8 +16,17 @@
 <meta name="apple-mobile-web-app-title" content="Taller" />
 <meta name="theme-color" content="#1c1917" />
 <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Taller%20%C2%B7%20Control%20de%20veh%C3%ADculos%22%2C%22short_name%22%3A%22Taller%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f5f5f4%22%2C%22theme_color%22%3A%22%231c1917%22%2C%22icons%22%3A%5B%5D%7D" />
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Se abren las conexiones con antelación y se fijan las versiones de las
+     librerías: con "@babel/standalone" sin versión, unpkg redirige y el
+     navegador no puede guardarlo en caché, así que se re-descargaba (~3 MB)
+     muy a menudo. Con la versión fija se descarga una vez y queda en caché. -->
+<link rel="preconnect" href="https://esm.sh" crossorigin />
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+<link rel="preconnect" href="https://unpkg.com" crossorigin />
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin />
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -43,7 +52,12 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <!-- Pantalla de carga inmediata: se ve mientras se descargan y preparan
+       las librerías (antes la pantalla estaba en blanco). React la sustituye
+       en cuanto arranca. -->
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f4;color:#000;font-size:14px;font-weight:500;text-transform:uppercase;">Cargando taller...</div>
+</div>
 
 <script type="text/babel" data-type="module" data-presets="react">
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -56,10 +70,10 @@ import {
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs
+  initializeFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where
 } from "firebase/firestore";
 import {
-  initializeAuth, inMemoryPersistence, signInAnonymously, onAuthStateChanged
+  initializeAuth, browserLocalPersistence, inMemoryPersistence, signInAnonymously, onAuthStateChanged
 } from "firebase/auth";
 
 /* ---------------------------------------------------------
@@ -123,79 +137,112 @@ let firestoreAPI = null;
 
 if (FIREBASE_CONFIGURED) {
   const firebaseApp = initializeApp(firebaseConfig);
-  const db = getFirestore(firebaseApp);
-  // inMemoryPersistence evita depender de IndexedDB, que en algunos
-  // navegadores móviles se bloquea o cuelga silenciosamente. Como el
-  // login es anónimo y las reglas solo exigen "estar autenticado",
-  // no pasa nada por re-autenticar en cada carga de página.
-  const auth = initializeAuth(firebaseApp, { persistence: inMemoryPersistence });
-
-  const authReady = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      const online = typeof navigator !== "undefined" ? navigator.onLine : "desconocido";
-      reject(new Error(
-        `Tiempo de espera agotado iniciando sesión en Firebase (conexión: ${online}). Revisa la red o que el inicio de sesión anónimo esté activado en Firebase.`
-      ));
-    }, 15000);
-    onAuthStateChanged(auth, (user) => {
-      if (user) {
-        clearTimeout(timeout);
-        resolve(user);
-      }
-    });
-    signInAnonymously(auth).catch((err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
+  // Detección automática de "long polling": en redes con proxies/firewalls
+  // (wifi de taller, algunas operadoras) el canal normal se queda esperando
+  // ~10 s antes de rendirse. Con esto cambia solo al modo compatible.
+  const db = initializeFirestore(firebaseApp, { experimentalAutoDetectLongPolling: true });
+  // La sesión anónima ahora se recuerda en el dispositivo (localStorage, que
+  // no se cuelga como IndexedDB). Así, al abrir la app NO hay que volver a
+  // iniciar sesión por red: funciona incluso sin cobertura. Si el navegador
+  // no permite localStorage, cae a memoria como antes.
+  const auth = initializeAuth(firebaseApp, {
+    persistence: [browserLocalPersistence, inMemoryPersistence],
   });
+
+  // Antes, si el primer inicio de sesión fallaba (poca cobertura), la promesa
+  // quedaba rechazada PARA SIEMPRE y todos los guardados fallaban hasta
+  // recargar la página. Ahora cada intento fallido se puede repetir.
+  let authPromise = null;
+  const ensureAuth = () => {
+    if (authPromise) return authPromise;
+    authPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      let signingIn = false;
+      let unsub = null;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (unsub) unsub();
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        const online = typeof navigator !== "undefined" ? navigator.onLine : "desconocido";
+        finish(reject, new Error(
+          `Tiempo de espera agotado iniciando sesión en Firebase (conexión: ${online}). Revisa la red o que el inicio de sesión anónimo esté activado en Firebase.`
+        ));
+      }, 15000);
+      unsub = onAuthStateChanged(auth, (user) => {
+        if (user) finish(resolve, user);
+        else if (!signingIn) {
+          signingIn = true;
+          signInAnonymously(auth).catch((err) => finish(reject, err));
+        }
+      });
+    });
+    authPromise.catch(() => { authPromise = null; });
+    return authPromise;
+  };
+  // Se inicia ya, mientras el mecánico escribe la contraseña.
+  ensureAuth().catch(() => {});
 
   firestoreAPI = {
     async get(key) {
-      await authReady;
+      await ensureAuth();
       const snap = await getDoc(doc(db, FS_COLLECTION, key));
       if (!snap.exists()) return null;
       return { key, value: snap.data().value };
     },
-    async set(key, value) {
-      await authReady;
-      await setDoc(doc(db, FS_COLLECTION, key), { value, updatedAt: Date.now() });
+    // opts.light: documentos pesados (fotos) que no deben aparecer en las
+    // consultas "qué ha cambiado desde…" (no llevan el campo updatedAt).
+    async set(key, value, opts) {
+      await ensureAuth();
+      const payload = opts && opts.light ? { value, ts: Date.now() } : { value, updatedAt: Date.now() };
+      await setDoc(doc(db, FS_COLLECTION, key), payload);
       return { key, value };
     },
     async delete(key) {
-      await authReady;
+      await ensureAuth();
       await deleteDoc(doc(db, FS_COLLECTION, key));
       return { key, deleted: true };
     },
     async list(prefix) {
-      await authReady;
+      await ensureAuth();
       const snap = await getDocs(collection(db, FS_COLLECTION));
       const keys = [];
       snap.forEach((d) => {
         if (!prefix || d.id.startsWith(prefix)) keys.push(d.id);
       });
       return { keys };
-    }
+    },
+    // Solo los documentos modificados desde una fecha (evita bajarlo todo).
+    async changedSince(ts) {
+      await ensureAuth();
+      const snap = await getDocs(query(collection(db, FS_COLLECTION), where("updatedAt", ">", ts)));
+      const rows = [];
+      snap.forEach((d) => rows.push({ key: d.id, value: d.data().value }));
+      return rows;
+    },
+    resetAuth() {
+      authPromise = null;
+    },
   };
 }
 
 window.storage = firestoreAPI || localStorageAPI;
 
 /* ---------------------------------------------------------
-   Utilidades de almacenamiento
+   Utilidades y motor de almacenamiento local-primero
 --------------------------------------------------------- */
+// <engine>
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 /* ---------------------------------------------------------
-   Evita que un guardado se quede "colgado" para siempre.
-
-   Con poca cobertura de wifi/datos, Firestore puede quedarse
-   esperando la confirmación del servidor sin límite de tiempo:
-   la app se queda mostrando "Guardando..." indefinidamente, sin
-   pasar nunca a "Guardado" ni a "Error". Con este límite, si no
-   hay respuesta en 12 segundos, se avisa de que no hay conexión
-   en vez de dejar al usuario sin saber si se guardó o no.
+   Evita que una operación de red se quede "colgada" para
+   siempre (poca cobertura): pasado el límite, se da por
+   fallida y el motor de sincronización la reintenta solo.
 --------------------------------------------------------- */
-const SAVE_TIMEOUT_MS = 16000;
+const SAVE_TIMEOUT_MS = 20000;
 function withTimeout(promise, ms = SAVE_TIMEOUT_MS, message = "Sin respuesta del servidor. Comprueba tu conexión.") {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(message)), ms);
@@ -212,57 +259,1024 @@ function withTimeout(promise, ms = SAVE_TIMEOUT_MS, message = "Sin respuesta del
   });
 }
 
-async function storageGet(key) {
+/* ---------------------------------------------------------
+   Imágenes: foto completa (1000 px) + miniatura (360 px).
+   La miniatura viaja dentro del documento del coche (pesa
+   pocos KB); la foto completa se guarda aparte.
+   Se usa URL.createObjectURL en vez de FileReader/base64:
+   evita crear una cadena de ~15 MB con la foto original.
+--------------------------------------------------------- */
+const PHOTO_MAX_DIM = 1000;
+const PHOTO_QUALITY = 0.7;
+const THUMB_MAX_DIM = 360;
+const THUMB_QUALITY = 0.6;
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("No se pudo leer la imagen"));
+    img.src = src;
+  });
+}
+
+function drawScaled(img, maxDim, quality) {
+  let width = img.naturalWidth || img.width;
+  let height = img.naturalHeight || img.height;
+  const scale = Math.min(1, maxDim / Math.max(width, height));
+  width = Math.max(1, Math.round(width * scale));
+  height = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+async function fileToPhotoPair(file) {
+  const url = URL.createObjectURL(file);
   try {
-    const r = await window.storage.get(key);
-    return r ? JSON.parse(r.value) : null;
-  } catch {
-    return null;
+    const img = await loadImage(url);
+    return {
+      data: drawScaled(img, PHOTO_MAX_DIM, PHOTO_QUALITY),
+      thumb: drawScaled(img, THUMB_MAX_DIM, THUMB_QUALITY),
+    };
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
-async function storageSet(key, value) {
-  await withTimeout(window.storage.set(key, JSON.stringify(value)));
-  return true;
-}
-async function storageDelete(key) {
-  try {
-    await withTimeout(window.storage.delete(key));
-  } catch (err) {
-    console.error(`Error borrando "${key}":`, err);
-  }
-  return true;
+
+async function makeThumb(dataUrl) {
+  const img = await loadImage(dataUrl);
+  return drawScaled(img, THUMB_MAX_DIM, THUMB_QUALITY);
 }
 
 /* ---------------------------------------------------------
-   Compresión de imágenes a base64
+   Claves de almacenamiento remoto
 --------------------------------------------------------- */
-function fileToCompressedDataUrl(file, maxDim = 1000, quality = 0.7) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new window.Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > height && width > maxDim) {
-          height = Math.round((height * maxDim) / width);
-          width = maxDim;
-        } else if (height > maxDim) {
-          width = Math.round((width * maxDim) / height);
-          height = maxDim;
+const CARS_INDEX_KEY = "workshop:cars:index";
+const CAR_PREFIX = "workshop:cars:";
+const carKey = (id) => `${CAR_PREFIX}${id}`;
+const photoKey = (id) => `workshop:photo:${id}`;
+const ORDER_COUNTER_KEY = "workshop:orderCounter";
+// Se actualiza cada vez que alguien guarda un cambio. Sirve para saber,
+// sin recargar todo, si otro dispositivo ha modificado algo.
+const CHANGE_MARKER_KEY = "workshop:lastChangeAt";
+
+/* ---------------------------------------------------------
+   Base de datos local del dispositivo (IndexedDB)
+   - Guarda coches, fotos y la cola de cosas por subir.
+   - Si IndexedDB no está disponible o se cuelga (algunos
+     navegadores móviles / modo privado), cae a memoria y
+     avisa con `isDegraded()`.
+--------------------------------------------------------- */
+const LocalDB = (() => {
+  const DB_NAME = "taller-local";
+  const STORE = "kv";
+  const mem = new Map();
+  let dbPromise = null;
+  let degraded = false;
+
+  function open() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve) => {
+      let done = false;
+      const finish = (db) => {
+        if (done) {
+          if (db) {
+            try { db.close(); } catch {}
+          }
+          return;
         }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
+        done = true;
+        if (!db) degraded = true;
+        resolve(db);
       };
-      img.onerror = reject;
-      img.src = e.target.result;
+      if (typeof indexedDB === "undefined" || !indexedDB) return finish(null);
+      const timer = setTimeout(() => finish(null), 5000);
+      try {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const d = req.result;
+          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+        };
+        req.onsuccess = () => {
+          clearTimeout(timer);
+          const db = req.result;
+          db.onversionchange = () => db.close();
+          finish(db);
+        };
+        req.onerror = () => {
+          clearTimeout(timer);
+          finish(null);
+        };
+      } catch {
+        clearTimeout(timer);
+        finish(null);
+      }
+    });
+    return dbPromise;
+  }
+
+  async function idb(fn) {
+    const db = await open();
+    if (!db) throw new Error("sin-indexeddb");
+    try {
+      return await fn(db);
+    } catch (e) {
+      if (e && e.name === "InvalidStateError") dbPromise = null; // conexión cerrada: se reabrirá
+      throw e;
+    }
+  }
+
+  async function get(key) {
+    if (mem.has(key)) return mem.get(key);
+    try {
+      return await idb(
+        (db) =>
+          new Promise((res, rej) => {
+            const r = db.transaction(STORE, "readonly").objectStore(STORE).get(key);
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          })
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Devuelve true si quedó guardado de forma duradera (IndexedDB).
+  async function put(key, value) {
+    try {
+      await idb(
+        (db) =>
+          new Promise((res, rej) => {
+            const t = db.transaction(STORE, "readwrite");
+            t.objectStore(STORE).put(value, key);
+            t.oncomplete = () => res();
+            t.onerror = () => rej(t.error);
+            t.onabort = () => rej(t.error || new Error("abortado"));
+          })
+      );
+      mem.delete(key);
+      return true;
+    } catch (e) {
+      console.warn("IndexedDB: no se pudo guardar, se usa memoria", e);
+      mem.set(key, value);
+      degraded = true;
+      return false;
+    }
+  }
+
+  async function del(key) {
+    mem.delete(key);
+    try {
+      await idb(
+        (db) =>
+          new Promise((res, rej) => {
+            const t = db.transaction(STORE, "readwrite");
+            t.objectStore(STORE).delete(key);
+            t.oncomplete = () => res();
+            t.onerror = () => rej(t.error);
+            t.onabort = () => rej(t.error || new Error("abortado"));
+          })
+      );
+    } catch {}
+  }
+
+  async function entries(prefix) {
+    const out = new Map();
+    try {
+      await idb(
+        (db) =>
+          new Promise((res, rej) => {
+            const range = IDBKeyRange.bound(prefix, prefix + "\uffff");
+            const r = db.transaction(STORE, "readonly").objectStore(STORE).openCursor(range);
+            r.onsuccess = () => {
+              const c = r.result;
+              if (c) {
+                out.set(c.key, c.value);
+                c.continue();
+              } else res();
+            };
+            r.onerror = () => rej(r.error);
+          })
+      );
+    } catch {}
+    mem.forEach((v, k) => {
+      if (k.startsWith(prefix)) out.set(k, v);
+    });
+    return out;
+  }
+
+  async function keys(prefix) {
+    const out = new Set();
+    try {
+      await idb(
+        (db) =>
+          new Promise((res, rej) => {
+            const range = IDBKeyRange.bound(prefix, prefix + "\uffff");
+            const r = db.transaction(STORE, "readonly").objectStore(STORE).getAllKeys(range);
+            r.onsuccess = () => {
+              r.result.forEach((k) => out.add(k));
+              res();
+            };
+            r.onerror = () => rej(r.error);
+          })
+      );
+    } catch {}
+    mem.forEach((_, k) => {
+      if (k.startsWith(prefix)) out.add(k);
+    });
+    return [...out];
+  }
+
+  return { get, put, del, entries, keys, isDegraded: () => degraded };
+})();
+
+/* ---------------------------------------------------------
+   Motor "local primero"
+
+   Regla de oro: TODO cambio (texto o foto) se guarda primero
+   en el dispositivo y se apunta en una cola de "pendiente de
+   subir". Después se sube al servidor en segundo plano con
+   reintentos automáticos (al recuperar cobertura, al volver
+   a la app y cada 15 s). Nada se borra de la cola hasta que
+   el servidor lo ha confirmado.
+
+   - Las fotos completas van en documentos aparte
+     ("workshop:photo:<id>"), no dentro del coche: así el
+     documento del coche pesa poco (límite de Firestore: 1 MiB)
+     y la lista carga rápido. Dentro del coche solo va la
+     miniatura.
+   - Al abrir, se muestra al instante lo guardado en el móvil
+     y se sincroniza en segundo plano (solo baja lo que cambió).
+--------------------------------------------------------- */
+const LocalFirst = (() => {
+  const cars = new Map(); // id -> coche (copia en memoria de lo guardado localmente)
+  const outbox = new Map(); // "tipo:id" -> { kind, id, rev, perm?, error? }
+  const saveChains = new Map(); // id -> promesa del guardado local en curso
+  const migrated = new Map(); // id de foto antigua -> miniatura ya generada
+  const subs = new Set();
+  const carSubs = new Set();
+
+  const state = {
+    ready: false,
+    hasSynced: false,
+    pending: 0,
+    permFailed: 0,
+    permError: null,
+    pulling: false,
+    pushing: false,
+    syncing: false,
+    online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
+    lastError: null,
+    lastSyncAt: 0,
+    degraded: false,
+    stale: false,
+    progress: null,
+  };
+
+  const PULL_CONCURRENCY = 6;
+  const DELTA_MARGIN_MS = 60 * 60 * 1000; // margen por si los relojes de los móviles no coinciden
+  const FULL_PULL_EVERY_MS = 12 * 60 * 60 * 1000;
+  const MAX_CACHED_PHOTOS = 300;
+  const PHOTO_UPLOAD_TIMEOUT_MS = 60000;
+
+  let marker = 0;
+
+  /* ---- estado y suscripciones ---- */
+  function recount() {
+    state.pending = outbox.size;
+    let perm = 0;
+    let permError = null;
+    outbox.forEach((e) => {
+      if (e.perm) {
+        perm++;
+        permError = permError || e.error || "Error desconocido";
+      }
+    });
+    state.permFailed = perm;
+    state.permError = permError;
+    state.degraded = LocalDB.isDegraded();
+    state.syncing = state.pulling || state.pushing;
+  }
+  function emit() {
+    recount();
+    const snap = { ...state };
+    subs.forEach((fn) => {
+      try { fn(snap); } catch {}
+    });
+  }
+  let carsTimer = null;
+  function emitCars() {
+    if (carsTimer) return;
+    carsTimer = setTimeout(() => {
+      carsTimer = null;
+      const list = getCars();
+      carSubs.forEach((fn) => {
+        try { fn(list); } catch {}
+      });
+    }, 60);
+  }
+  const getCars = () => [...cars.values()];
+  const getState = () => {
+    recount();
+    return { ...state };
+  };
+  function subscribe(fn) {
+    subs.add(fn);
+    return () => subs.delete(fn);
+  }
+  function onCars(fn) {
+    carSubs.add(fn);
+    return () => carSubs.delete(fn);
+  }
+
+  function friendlyError(err) {
+    const code = err && err.code;
+    const msg = (err && err.message) || String(err);
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return "Sin conexión";
+    if (code === "permission-denied" || code === "unauthenticated")
+      return "Firebase ha rechazado el acceso (revisa las reglas o el inicio de sesión anónimo)";
+    if (code === "resource-exhausted") return "Se ha agotado la cuota de Firebase";
+    if (/exceeds the maximum|maximum size|too large/i.test(msg)) return "Documento demasiado grande para Firebase";
+    return msg;
+  }
+  function isPermanent(err) {
+    const code = err && err.code;
+    const msg = (err && err.message) || "";
+    return code === "invalid-argument" || /exceeds the maximum|maximum size|too large/i.test(msg);
+  }
+  function noteError(err) {
+    state.lastError = friendlyError(err);
+    emit();
+  }
+
+  /* ---- acceso al servidor (estricto: si falla, lanza error) ---- */
+  const Remote = {
+    async get(key, ms = 25000) {
+      const r = await withTimeout(window.storage.get(key), ms);
+      return r ? JSON.parse(r.value) : null;
+    },
+    async set(key, value, ms = 25000, opts) {
+      await withTimeout(window.storage.set(key, JSON.stringify(value), opts), ms);
+    },
+    async del(key, ms = 25000) {
+      await withTimeout(window.storage.delete(key), ms);
+    },
+    async changedSince(ts, ms = 30000) {
+      if (typeof window.storage.changedSince !== "function") throw new Error("delta-no-soportado");
+      return withTimeout(window.storage.changedSince(ts), ms);
+    },
+  };
+
+  /* ---- exclusión mutua: no se mezcla subir con bajar ---- */
+  let lockChain = Promise.resolve();
+  function withLock(fn) {
+    const run = lockChain.then(fn);
+    lockChain = run.catch(() => {});
+    return run;
+  }
+
+  /* ---- cola de pendientes ---- */
+  function queue(kind, id, extra = {}) {
+    const key = kind + ":" + id;
+    const prev = outbox.get(key);
+    const entry = { kind, id, rev: (prev ? prev.rev : 0) + 1, ...extra };
+    if (kind === "index") {
+      entry.remove = Array.from(new Set([...((prev && prev.remove) || []), ...(extra.remove || [])]));
+    }
+    outbox.set(key, entry);
+    emit();
+    scheduleFlush();
+    return LocalDB.put("pend:" + key, entry);
+  }
+  function unqueue(key) {
+    outbox.delete(key);
+    return LocalDB.del("pend:" + key);
+  }
+  async function dequeueIfSame(key, rev) {
+    const cur = outbox.get(key);
+    if (cur && cur.rev === rev) await unqueue(key);
+    emit();
+  }
+  const hasWork = () => [...outbox.values()].some((e) => !e.perm);
+
+  let flushTimer = null;
+  function scheduleFlush(delay = 300) {
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flush().catch(() => {});
+    }, delay);
+  }
+
+  /* ---- utilidades de fotos ---- */
+  function photoIdsOf(car) {
+    const ids = [];
+    (car.photos || []).forEach((p) => p && p.id && ids.push(p.id));
+    (car.clientPhotos || []).forEach((p) => p && p.id && ids.push(p.id));
+    (car.parts || []).forEach((pt) => pt && pt.photo && pt.photo.id && ids.push(pt.photo.id));
+    return ids;
+  }
+  function legacyPhotosOf(car) {
+    let n = 0;
+    (car.photos || []).forEach((p) => p && p.data && n++);
+    (car.clientPhotos || []).forEach((p) => p && p.data && n++);
+    (car.parts || []).forEach((pt) => pt && pt.photo && pt.photo.data && n++);
+    return n;
+  }
+  const countLegacyPhotos = (list) => list.reduce((sum, c) => sum + legacyPhotosOf(c), 0);
+
+  // Foto antigua (con la imagen completa dentro del coche) -> foto nueva
+  // (miniatura en el coche + imagen completa aparte).
+  async function prepareCar(car) {
+    if (legacyPhotosOf(car) === 0) return car;
+    const migrateOne = async (p) => {
+      if (!p || !p.data) return p;
+      let thumb = migrated.get(p.id);
+      if (!thumb) {
+        thumb = await makeThumb(p.data).catch(() => null);
+        if (!thumb) return p; // no se pudo: se deja como estaba
+        await savePhotoLocal(p.id, p.data);
+        migrated.set(p.id, thumb);
+      }
+      return { id: p.id, thumb };
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+    const photos = await Promise.all((car.photos || []).map(migrateOne));
+    const clientPhotos = await Promise.all((car.clientPhotos || []).map(migrateOne));
+    const parts = await Promise.all(
+      (car.parts || []).map(async (pt) => (pt && pt.photo ? { ...pt, photo: await migrateOne(pt.photo) } : pt))
+    );
+    return { ...car, photos, clientPhotos, parts };
+  }
+
+  /* ---- operaciones locales (lo que usa la interfaz) ---- */
+  async function savePhotoLocal(id, data) {
+    const durable = await LocalDB.put("photo:" + id, data);
+    queue("photo", id);
+    return durable;
+  }
+
+  async function getFullPhoto(id) {
+    const local = await LocalDB.get("photo:" + id);
+    if (local) return local;
+    const rec = await Remote.get(photoKey(id), 45000);
+    if (rec && rec.data) {
+      LocalDB.put("photo:" + id, rec.data);
+      return rec.data;
+    }
+    return null;
+  }
+
+  async function doSaveCar(car, removed) {
+    let prepared = car;
+    try {
+      prepared = await prepareCar(car);
+    } catch (e) {
+      console.warn("No se pudieron optimizar las fotos de este coche:", e);
+    }
+    if (cars.get(car.id) === car) cars.set(car.id, prepared);
+    await LocalDB.put("car:" + car.id, prepared);
+    for (const pid of removed) {
+      await unqueue("photo:" + pid);
+      await LocalDB.del("photo:" + pid);
+      await queue("delphoto", pid);
+    }
+    emitCars();
+  }
+
+  function saveCarLocal(input) {
+    let car = input;
+    const cur = cars.get(car.id);
+    // Si el código de orden ya se asignó, no se pierde por una edición con la ficha antigua.
+    if (cur && cur.orderCode && !car.orderCode) car = { ...car, orderCode: cur.orderCode };
+    const nowIds = new Set(photoIdsOf(car));
+    const removed = cur ? photoIdsOf(cur).filter((pid) => !nowIds.has(pid)) : [];
+
+    // Parte síncrona: la interfaz y la cola ya "saben" del cambio antes de esperar a nada.
+    cars.set(car.id, car);
+    queue("car", car.id);
+    emitCars();
+
+    const prevChain = saveChains.get(car.id) || Promise.resolve();
+    const next = prevChain.then(() => doSaveCar(car, removed));
+    const tracked = next
+      .catch(() => {})
+      .then(() => {
+        if (saveChains.get(car.id) === tracked) saveChains.delete(car.id);
+      });
+    saveChains.set(car.id, tracked);
+    return next;
+  }
+
+  async function createCarLocal(car) {
+    queue("index", "main");
+    return saveCarLocal(car);
+  }
+
+  async function deleteCarLocal(id) {
+    const car = cars.get(id);
+    cars.delete(id);
+    emitCars();
+    await unqueue("car:" + id);
+    const pids = car ? photoIdsOf(car) : [];
+    for (const pid of pids) {
+      await unqueue("photo:" + pid);
+      await LocalDB.del("photo:" + pid);
+    }
+    await LocalDB.del("car:" + id);
+    await queue("delcar", id, { photoIds: pids });
+    await queue("index", "main", { remove: [id] });
+  }
+
+  /* ---- subida (local -> servidor) ---- */
+  async function pushPhoto(e) {
+    const data = await LocalDB.get("photo:" + e.id);
+    if (!data) return "gone";
+    await Remote.set(photoKey(e.id), { data }, PHOTO_UPLOAD_TIMEOUT_MS, { light: true });
+    return "ok";
+  }
+
+  async function pushCar(e) {
+    await (saveChains.get(e.id) || Promise.resolve());
+    const car = cars.get(e.id);
+    if (!car) return "gone";
+    // No se sube el coche mientras alguna de sus fotos siga sin subir:
+    // así nunca queda una miniatura apuntando a una foto que no existe.
+    const blocked = photoIdsOf(car).some((pid) => {
+      const pe = outbox.get("photo:" + pid);
+      return pe && !pe.perm;
+    });
+    if (blocked) return "skip";
+    await Remote.set(carKey(car.id), car, 30000);
+    return "ok";
+  }
+
+  async function pushDelCar(e) {
+    await Remote.del(carKey(e.id));
+    for (const pid of e.photoIds || []) await Remote.del(photoKey(pid));
+    return "ok";
+  }
+
+  async function pushDelPhoto(e) {
+    await Remote.del(photoKey(e.id));
+    return "ok";
+  }
+
+  async function pushIndex(e) {
+    // Mientras haya coches por subir, el índice espera (los coches se suben antes).
+    const carPending = [...outbox.values()].some((x) => x.kind === "car" && !x.perm);
+    if (carPending) return "skip";
+    const server = (await Remote.get(CARS_INDEX_KEY)) || [];
+    const remove = new Set(e.remove || []);
+    const merged = new Set(server.filter((id) => !remove.has(id)));
+    cars.forEach((_, id) => merged.add(id));
+    const same = merged.size === server.length && server.every((id) => merged.has(id));
+    if (!same) await Remote.set(CARS_INDEX_KEY, [...merged]);
+    return "ok";
+  }
+
+  async function applyCode(id, code) {
+    const cur = cars.get(id);
+    if (!cur) return;
+    const next = { ...cur, orderCode: code };
+    cars.set(id, next);
+    await LocalDB.put("car:" + id, next);
+    emitCars();
+  }
+
+  // Los coches creados sin conexión no tienen código OT-xxxx todavía: se asigna al sincronizar.
+  async function assignCodes() {
+    const need = [...outbox.values()]
+      .filter((e) => e.kind === "car" && !e.perm)
+      .map((e) => cars.get(e.id))
+      .filter((c) => c && !c.orderCode)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (need.length === 0) return "ok";
+    try {
+      let last = (await Remote.get(ORDER_COUNTER_KEY)) || 0;
+      for (const c of need) {
+        last += 1;
+        await Remote.set(ORDER_COUNTER_KEY, last);
+        await applyCode(c.id, `OT-${String(last).padStart(4, "0")}`);
+      }
+      return "ok";
+    } catch (err) {
+      noteError(err);
+      return "net";
+    }
+  }
+
+  async function attempt(e, fn) {
+    const key = e.kind + ":" + e.id;
+    try {
+      const r = await fn(e);
+      if (r === "skip") return "skip";
+      await dequeueIfSame(key, e.rev);
+      return "ok";
+    } catch (err) {
+      noteError(err);
+      if (isPermanent(err)) {
+        const cur = outbox.get(key);
+        if (cur) {
+          cur.perm = true;
+          cur.error = friendlyError(err);
+          await LocalDB.put("pend:" + key, cur);
+        }
+        emit();
+        return "perm";
+      }
+      if (err && (err.code === "permission-denied" || err.code === "unauthenticated")) {
+        try { window.storage.resetAuth && window.storage.resetAuth(); } catch {}
+      }
+      return "net";
+    }
+  }
+
+  async function flushLoop() {
+    if (!hasWork()) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      emit();
+      return;
+    }
+    state.pushing = true;
+    emit();
+    let pushedCar = false;
+    let networkDown = false;
+    try {
+      const kinds = [
+        ["photo", pushPhoto],
+        ["car", pushCar],
+        ["delcar", pushDelCar],
+        ["delphoto", pushDelPhoto],
+        ["index", pushIndex],
+      ];
+      outer: for (const [kind, fn] of kinds) {
+        if (kind === "car") {
+          if ((await assignCodes()) === "net") {
+            networkDown = true;
+            break;
+          }
+        }
+        const batch = [...outbox.values()].filter((x) => x.kind === kind && !x.perm);
+        for (const e of batch) {
+          const r = await attempt(e, fn);
+          if (r === "net") {
+            networkDown = true;
+            break outer;
+          }
+          if (r === "ok" && kind === "car") pushedCar = true;
+        }
+      }
+    } finally {
+      state.pushing = false;
+      if (pushedCar) bumpMarker();
+      if (!networkDown) state.lastError = null;
+      emit();
+    }
+  }
+  const flush = () => withLock(flushLoop);
+
+  function bumpMarker() {
+    const now = Date.now();
+    marker = now;
+    state.stale = false;
+    Remote.set(CHANGE_MARKER_KEY, now, 15000).catch(() => {});
+  }
+
+  /* ---- bajada (servidor -> local) ---- */
+  async function pullImpl({ full = false } = {}) {
+    const startedAt = Date.now();
+
+    let markerAtStart = startedAt;
+    try {
+      markerAtStart = (await Remote.get(CHANGE_MARKER_KEY, 15000)) || startedAt;
+    } catch {}
+
+    const rawIndex = await Remote.get(CARS_INDEX_KEY);
+    const serverIds = Array.isArray(rawIndex) ? rawIndex : [];
+    const lastPull = (await LocalDB.get("meta:lastPull")) || 0;
+    const lastFull = (await LocalDB.get("meta:lastFullPull")) || 0;
+    const needFull = full || !lastPull || !lastFull || startedAt - lastFull > FULL_PULL_EVERY_MS;
+
+    const deleting = new Set([...outbox.values()].filter((e) => e.kind === "delcar").map((e) => e.id));
+    const prefetched = new Map();
+    let useDelta = false;
+    if (!needFull) {
+      try {
+        const rows = await Remote.changedSince(lastPull - DELTA_MARGIN_MS);
+        for (const row of rows) {
+          if (!row.key.startsWith(CAR_PREFIX) || row.key === CARS_INDEX_KEY) continue;
+          try {
+            prefetched.set(row.key.slice(CAR_PREFIX.length), JSON.parse(row.value));
+          } catch {}
+        }
+        useDelta = true;
+      } catch {
+        useDelta = false; // sin consulta por fecha: se baja todo (en paralelo)
+      }
+    }
+
+    const toFetch = new Set();
+    for (const id of serverIds) {
+      if (deleting.has(id) || prefetched.has(id)) continue;
+      if (!useDelta || !cars.has(id)) toFetch.add(id);
+    }
+
+    const total = toFetch.size + prefetched.size;
+    let done = 0;
+    state.progress = total > 0 ? { done: 0, total } : null;
+    emit();
+
+    const failures = [];
+    let firstErr = null;
+    const missing = []; // en el índice pero sin documento
+
+    const mergeCar = async (id, car) => {
+      if (!car || typeof car !== "object") return;
+      if (deleting.has(id) || outbox.has("car:" + id)) return; // hay cambios locales sin subir: mandan ellos
+      cars.set(id, car);
+      await LocalDB.put("car:" + id, car);
+    };
+    const tick = () => {
+      done++;
+      state.progress = { done, total };
+      emit();
+      emitCars();
+    };
+
+    for (const [id, car] of prefetched) {
+      await mergeCar(id, car);
+      tick();
+    }
+
+    const pendingIds = [...toFetch];
+    const worker = async () => {
+      while (pendingIds.length) {
+        const id = pendingIds.shift();
+        try {
+          const car = await Remote.get(carKey(id), 30000);
+          if (car === null) missing.push(id);
+          else await mergeCar(id, car);
+        } catch (err) {
+          failures.push(id);
+          firstErr = firstErr || err;
+        }
+        tick();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PULL_CONCURRENCY, pendingIds.length) }, worker));
+
+    // Coches que ya no existen en el servidor (borrados desde otro móvil)
+    const serverSet = new Set(serverIds);
+    const removeFromIndex = [];
+    for (const id of missing) {
+      if (!outbox.has("car:" + id)) {
+        cars.delete(id);
+        await LocalDB.del("car:" + id);
+      }
+      removeFromIndex.push(id);
+    }
+    if (failures.length === 0) {
+      const candidates = [...cars.keys()].filter(
+        (id) => !serverSet.has(id) && !prefetched.has(id) && !outbox.has("car:" + id) && !outbox.has("index:main")
+      );
+      for (const id of candidates) {
+        try {
+          const car = await Remote.get(carKey(id), 20000);
+          if (car === null) {
+            cars.delete(id);
+            await LocalDB.del("car:" + id);
+          } else {
+            queue("index", "main"); // el coche existe pero faltaba en el índice: se repara
+          }
+        } catch {}
+      }
+    }
+    if (removeFromIndex.length) queue("index", "main", { remove: removeFromIndex });
+
+    // Coches antiguos sin código de orden: se les asigna uno (como hacía la versión anterior).
+    if (needFull && failures.length === 0) {
+      cars.forEach((c, id) => {
+        if (!c.orderCode && !outbox.has("car:" + id)) queue("car", id);
+      });
+    }
+
+    if (failures.length === 0) {
+      await LocalDB.put("meta:lastPull", startedAt);
+      if (needFull) await LocalDB.put("meta:lastFullPull", startedAt);
+      state.hasSynced = true;
+      marker = markerAtStart;
+      state.stale = false;
+    }
+    emitCars();
+    if (failures.length > 0) throw firstErr;
+  }
+
+  let syncPromise = null;
+  function syncNow({ full = false } = {}) {
+    if (syncPromise) return syncPromise;
+    syncPromise = (async () => {
+      state.pulling = true;
+      state.lastError = null;
+      emit();
+      try {
+        await withLock(() => pullImpl({ full }));
+        state.lastSyncAt = Date.now();
+        state.lastError = null;
+      } catch (err) {
+        noteError(err);
+        throw err;
+      } finally {
+        state.pulling = false;
+        state.progress = null;
+        syncPromise = null;
+        emit();
+        emitCars();
+        if (hasWork()) flush().catch(() => {});
+      }
+    })();
+    return syncPromise;
+  }
+
+  // Reintento manual: quita las marcas de "error permanente" y vuelve a intentarlo todo.
+  function retryNow() {
+    outbox.forEach((e) => {
+      if (e.perm) {
+        e.perm = false;
+        e.error = null;
+        LocalDB.put("pend:" + e.kind + ":" + e.id, e);
+      }
+    });
+    emit();
+    return flush();
+  }
+
+  // Convierte todas las fotos antiguas (imagen completa dentro del coche).
+  async function migrateLegacy(onProgress) {
+    await syncNow({ full: true }); // primero se baja lo último, para no pisar cambios de otros
+    const targets = getCars().filter((c) => legacyPhotosOf(c) > 0);
+    let done = 0;
+    for (const c of targets) {
+      const latest = cars.get(c.id);
+      if (latest && legacyPhotosOf(latest) > 0) await saveCarLocal(latest);
+      done++;
+      if (onProgress) onProgress(done, targets.length);
+    }
+    flush().catch(() => {});
+    return targets.length;
+  }
+
+  /* ---- arranque y tareas de fondo ---- */
+  async function pollMarker() {
+    if (typeof document !== "undefined" && document.hidden) return;
+    try {
+      const m = (await Remote.get(CHANGE_MARKER_KEY, 10000)) || 0;
+      if (m > marker && !state.stale) {
+        state.stale = true;
+        emit();
+      }
+    } catch {}
+  }
+
+  let started = false;
+  function startBackground(opts = {}) {
+    if (started) return;
+    started = true;
+    window.addEventListener("online", () => {
+      state.online = true;
+      emit();
+      flush().catch(() => {});
+      syncNow().catch(() => {});
+    });
+    window.addEventListener("offline", () => {
+      state.online = false;
+      emit();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        if (hasWork()) flush().catch(() => {});
+        if (opts.pollMarker) pollMarker();
+      }
+    });
+    setInterval(() => {
+      if (hasWork()) flush().catch(() => {});
+    }, 15000);
+    if (opts.pollMarker) setInterval(pollMarker, 20000);
+    // Pide al navegador que no borre estos datos si hay poco espacio.
+    try {
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    } catch {}
+  }
+
+  // Borra las fotos más antiguas guardadas en caché (nunca las que están por subir).
+  async function prunePhotos() {
+    try {
+      const ids = (await LocalDB.keys("photo:"))
+        .map((k) => k.slice(6))
+        .filter((id) => !outbox.has("photo:" + id))
+        .sort();
+      const excess = ids.length - MAX_CACHED_PHOTOS;
+      for (let i = 0; i < excess; i++) await LocalDB.del("photo:" + ids[i]);
+    } catch {}
+  }
+
+  let initPromise = null;
+  function init() {
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
+      const carEntries = await LocalDB.entries("car:");
+      carEntries.forEach((v) => {
+        if (v && v.id) cars.set(v.id, v);
+      });
+      const pend = await LocalDB.entries("pend:");
+      pend.forEach((v, k) => {
+        if (v && v.kind) {
+          v.perm = false; // tras reiniciar se vuelve a intentar
+          outbox.set(k.slice(5), v);
+        }
+      });
+      state.hasSynced = !!(await LocalDB.get("meta:lastPull"));
+      state.ready = true;
+      emit();
+      setTimeout(prunePhotos, 3000);
+      return getCars();
+    })();
+    return initPromise;
+  }
+
+  let bootPromise = null;
+  function boot(opts = {}) {
+    if (!bootPromise) {
+      bootPromise = init().then((list) => {
+        startBackground(opts);
+        syncNow().catch(() => {});
+        return list;
+      });
+    }
+    return bootPromise;
+  }
+
+  return {
+    boot, init, startBackground,
+    getCars, getState, subscribe, onCars,
+    saveCarLocal, createCarLocal, deleteCarLocal,
+    savePhotoLocal, getFullPhoto,
+    syncNow, flush, retryNow, migrateLegacy, countLegacyPhotos,
+  };
+})();
+// </engine>
+
+
+/* ---------------------------------------------------------
+   Hooks de React para el motor local
+--------------------------------------------------------- */
+function useSyncState() {
+  const [s, setS] = useState(() => LocalFirst.getState());
+  useEffect(() => {
+    setS(LocalFirst.getState());
+    return LocalFirst.subscribe(setS);
+  }, []);
+  return s;
+}
+
+// Devuelve la foto completa de una foto (miniatura mientras carga).
+// Fotos antiguas: la imagen viene dentro del propio coche (p.data).
+// Fotos nuevas: se busca en el móvil y, si no está, se descarga.
+function useFullPhoto(photo) {
+  const id = photo ? photo.id : null;
+  const inline = photo ? photo.data : null;
+  const [full, setFull] = useState(inline || null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+    if (!id) {
+      setFull(null);
+      return;
+    }
+    if (inline) {
+      setFull(inline);
+      return;
+    }
+    let cancelled = false;
+    setFull(null);
+    LocalFirst.getFullPhoto(id)
+      .then((d) => {
+        if (cancelled) return;
+        if (d) setFull(d);
+        else setFailed(true);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, inline]);
+  const preview = photo ? photo.thumb || photo.data || null : null;
+  return { src: full || preview, full, loading: !!id && !full && !failed, failed };
 }
 
 /* ---------------------------------------------------------
@@ -330,8 +1344,17 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
     if (!file) return;
     setLoading(true);
     try {
-      const dataUrl = await fileToCompressedDataUrl(file);
-      onPick(dataUrl);
+      const { data, thumb } = await fileToPhotoPair(file);
+      const id = uid();
+      // 1) Se guarda YA en el móvil: sobrevive a cortes de cobertura,
+      //    cierres de la app y recargas.
+      await LocalFirst.savePhotoLocal(id, data);
+      // 2) Se entrega a la ficha; la subida a Firebase va en segundo plano
+      //    y se reintenta sola hasta que el servidor la confirme.
+      onPick({ id, thumb });
+    } catch (err) {
+      console.error("No se pudo procesar la foto:", err);
+      window.alert("No se pudo procesar la foto. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -443,6 +1466,7 @@ function ImageLightbox({ photos, index, onClose, onIndexChange }) {
   const lastTapRef = useRef(0);
 
   const current = photos && photos[index];
+  const fullPhoto = useFullPhoto(current);
 
   useEffect(() => {
     setScale(1);
@@ -451,7 +1475,7 @@ function ImageLightbox({ photos, index, onClose, onIndexChange }) {
 
   if (!current) return null;
 
-  const src = current.data;
+  const src = fullPhoto.src;
   const supplier = current.supplier;
 
   const goTo = (newIndex) => {
@@ -544,7 +1568,8 @@ function ImageLightbox({ photos, index, onClose, onIndexChange }) {
   const handleShare = async (e) => {
     e.stopPropagation();
     try {
-      const res = await fetch(src);
+      const shareSrc = fullPhoto.full || src;
+      const res = await fetch(shareSrc);
       const blob = await res.blob();
       const file = new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" });
 
@@ -554,7 +1579,7 @@ function ImageLightbox({ photos, index, onClose, onIndexChange }) {
         // Alternativa si el navegador no admite compartir archivos:
         // se descarga la imagen para que el usuario la comparta manualmente.
         const link = document.createElement("a");
-        link.href = src;
+        link.href = shareSrc;
         link.download = "foto.jpg";
         link.click();
       }
@@ -584,6 +1609,15 @@ function ImageLightbox({ photos, index, onClose, onIndexChange }) {
         }}
         className="max-w-full max-h-full rounded-lg select-none touch-none"
       />
+
+      {(fullPhoto.loading || fullPhoto.failed) && (
+        <div
+          className="absolute bottom-14 left-1/2 -translate-x-1/2 bg-white/15 backdrop-blur-sm text-white text-xs font-bold px-3 py-1.5 rounded-full border border-white/20 whitespace-nowrap"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {fullPhoto.loading ? "Cargando foto…" : "Vista previa · foto completa aún no disponible"}
+        </div>
+      )}
 
       {supplier ? (
         <div
@@ -670,7 +1704,7 @@ function PhotoGallery({ photos, onDelete, onAdd, onOpen }) {
         {photos.map((p) => (
           <div key={p.id} className="relative group">
             <img
-              src={p.data}
+              src={p.thumb || p.data}
               alt=""
               onClick={() => onOpen(p.id)}
               className="w-16 h-16 object-cover rounded-md border border-stone-300 cursor-pointer"
@@ -885,7 +1919,7 @@ function PartCard({ part, onUpdate, onDelete, onOpenPhoto }) {
             {part.photo ? (
               <div className="relative">
                 <img
-                  src={part.photo.data}
+                  src={part.photo.thumb || part.photo.data}
                   alt=""
                   onClick={() => onOpenPhoto(part.photo.id)}
                   className="w-24 h-24 object-cover rounded-md border border-stone-300 cursor-pointer"
@@ -903,7 +1937,7 @@ function PartCard({ part, onUpdate, onDelete, onOpenPhoto }) {
                 <PhotoPicker
                   small
                   label=""
-                  onPick={(data) => onUpdate({ ...part, photo: { id: uid(), data } })}
+                  onPick={(photo) => onUpdate({ ...part, photo })}
                 />
               </div>
             )}
@@ -1031,9 +2065,44 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
     };
   }, []);
 
+  // Al ocultarse la app (cambiar de app, bloquear el móvil, cerrar la pestaña)
+  // se guarda al momento cualquier cambio que estuviera esperando el retardo
+  // de 600 ms.
+  useEffect(() => {
+    const flushPending = () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+        onUpdateRef.current(carRef.current);
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushPending();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flushPending);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flushPending);
+    };
+  }, []);
+
+  // Cuando el código de orden (OT-xxxx) se asigna al sincronizar un coche
+  // creado sin conexión, se refleja en la ficha abierta.
+  useEffect(() => {
+    if (car.orderCode && !carRef.current.orderCode) {
+      carRef.current = { ...carRef.current, orderCode: car.orderCode };
+      setLocalCar((l) => (l.orderCode ? l : { ...l, orderCode: car.orderCode }));
+    }
+  }, [car.orderCode]);
+
   const patch = useCallback(
     (fields) => {
-      const updated = { ...localCar, ...fields, updatedAt: Date.now() };
+      // Se parte SIEMPRE de la última versión (carRef), no de la de este
+      // render: una foto tarda unos instantes en procesarse y, mientras,
+      // el mecánico puede haber escrito otra cosa que no debe perderse.
+      const updated = { ...carRef.current, ...fields, updatedAt: Date.now() };
+      carRef.current = updated;
       setLocalCar(updated);
 
       // Debounce: la UI se actualiza al instante, pero el guardado real
@@ -1059,7 +2128,8 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
       }
-      const updated = { ...localCar, ...fields, updatedAt: Date.now() };
+      const updated = { ...carRef.current, ...fields, updatedAt: Date.now() };
+      carRef.current = updated;
       setLocalCar(updated);
       onUpdateRef.current(updated);
     },
@@ -1155,15 +2225,15 @@ function CarDetail({ car, onBack, onUpdate, onDelete }) {
     patchNow({ parts: localCar.parts.filter((p) => p.id !== id) });
   };
 
-  const addPhoto = (data) => {
-    patchNow({ photos: [...localCar.photos, { id: uid(), data }] });
+  const addPhoto = (photo) => {
+    patchNow({ photos: [...(carRef.current.photos || []), photo] });
   };
   const deletePhoto = (id) => {
     patchNow({ photos: localCar.photos.filter((p) => p.id !== id) });
   };
 
-  const addClientPhoto = (data) => {
-    patchNow({ clientPhotos: [...(localCar.clientPhotos || []), { id: uid(), data }] });
+  const addClientPhoto = (photo) => {
+    patchNow({ clientPhotos: [...(carRef.current.clientPhotos || []), photo] });
   };
   const deleteClientPhoto = (id) => {
     patchNow({ clientPhotos: (localCar.clientPhotos || []).filter((p) => p.id !== id) });
@@ -1508,7 +2578,7 @@ function CarListItem({ car, onOpen, selectionMode, selected, onToggleSelect, onL
       )}
       <div className="relative w-full h-48 bg-stone-100">
         {thumb ? (
-          <img src={thumb.data} alt="" className="w-full h-full object-cover" />
+          <img src={thumb.thumb || thumb.data} alt="" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-black">
             <Car size={40} />
@@ -1583,6 +2653,14 @@ function CarListScreen({
   onDeleteMultiple,
 }) {
   const { pullDistance, refreshing } = usePullToRefresh(onRefresh, true);
+  const syncInfo = useSyncState();
+  const headerSync = !FIREBASE_CONFIGURED
+    ? { text: "Solo este dispositivo", dot: "bg-amber-500" }
+    : syncInfo.pending > 0
+    ? { text: syncInfo.online ? `${syncInfo.pending} sin subir` : `Sin conexión · ${syncInfo.pending} sin subir`, dot: "bg-amber-500" }
+    : !syncInfo.online
+    ? { text: "Sin conexión", dot: "bg-amber-500" }
+    : { text: "Sincronizado", dot: "bg-green-500" };
   const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1700,11 +2778,9 @@ function CarListScreen({
                 <p className="font-semibold leading-tight uppercase">Taller</p>
                 <p className="text-[11px] text-white/80 leading-tight flex items-center gap-1 uppercase">
                   <span
-                    className={`w-1.5 h-1.5 rounded-full inline-block ${
-                      FIREBASE_CONFIGURED ? "bg-green-500" : "bg-amber-500"
-                    }`}
+                    className={`w-1.5 h-1.5 rounded-full inline-block ${headerSync.dot}`}
                   />
-                  {FIREBASE_CONFIGURED ? "Sincronizado" : "Solo este dispositivo"}
+                  {headerSync.text}
                 </p>
               </div>
             </button>
@@ -1810,7 +2886,7 @@ function CarListScreen({
    Barra lateral: historial de trabajos completados y
    recordatorio de piezas pendientes de pedir/recibir
 --------------------------------------------------------- */
-function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
+function WorkshopSidebar({ open, onClose, cars, onOpenCar, sync, legacyCount, migration, onSyncFull, onMigrate }) {
   const completed = cars
     .filter((c) => c.status === "terminado" && c.finishedAt)
     .sort((a, b) => b.finishedAt - a.finishedAt);
@@ -1936,6 +3012,51 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar }) {
               </div>
             )}
           </section>
+
+          <section>
+            <h3 className="text-sm font-bold text-black uppercase tracking-wide mb-2 flex items-center gap-1.5">
+              <RefreshCw size={15} /> Sincronización
+            </h3>
+            <div className="bg-white rounded-lg border-2 border-stone-200 px-3 py-2.5 space-y-2 text-sm text-black">
+              <p className="font-medium">
+                {sync.online ? "Con conexión" : "Sin conexión"} ·{" "}
+                {sync.pending > 0
+                  ? `${sync.pending} ${sync.pending === 1 ? "cambio" : "cambios"} sin subir`
+                  : "Todo subido"}
+              </p>
+              {sync.lastSyncAt > 0 && (
+                <p className="text-stone-600">
+                  Última sincronización:{" "}
+                  {new Date(sync.lastSyncAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}
+                </p>
+              )}
+              {sync.lastError && <p className="text-red-600 font-medium break-words">{sync.lastError}</p>}
+              {sync.degraded && (
+                <p className="text-red-600 font-bold">
+                  Este navegador no permite guardar datos en el móvil: sin cobertura, las fotos se pueden perder si se cierra la app.
+                </p>
+              )}
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  onClick={onSyncFull}
+                  className="w-full py-2.5 rounded-lg bg-stone-800 text-white text-sm font-bold uppercase active:scale-[0.99] transition"
+                >
+                  Sincronizar todo ahora
+                </button>
+                {legacyCount > 0 && (
+                  <button
+                    onClick={onMigrate}
+                    disabled={!!migration}
+                    className="w-full py-2.5 rounded-lg bg-amber-600 text-white text-sm font-bold uppercase disabled:opacity-60 active:scale-[0.99] transition"
+                  >
+                    {migration
+                      ? `Optimizando… ${migration.done}/${migration.total}`
+                      : `Optimizar ${legacyCount} fotos antiguas`}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </>
@@ -2015,37 +3136,40 @@ function LoginGate({ children }) {
 /* ---------------------------------------------------------
    App principal
 --------------------------------------------------------- */
-const CARS_INDEX_KEY = "workshop:cars:index";
-const carKey = (id) => `workshop:cars:${id}`;
-const ORDER_COUNTER_KEY = "workshop:orderCounter";
-// Se actualiza cada vez que alguien guarda un cambio. Sirve para saber,
-// sin recargar todo, si otro dispositivo ha modificado algo mientras
-// tú tenías la app abierta.
-const CHANGE_MARKER_KEY = "workshop:lastChangeAt";
-
 function App() {
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
-  const [cars, setCars] = useState([]);
+  const sync = useSyncState();
+  const [cars, setCars] = useState(() => LocalFirst.getCars());
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState("pendiente");
-  const [saveStatus, setSaveStatus] = useState("idle");
-  const [saveError, setSaveError] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [migration, setMigration] = useState(null);
+  const [showSynced, setShowSynced] = useState(false);
   const openIdRef = useRef(openId);
-
-  // Aviso de "hay cambios nuevos": se activa cuando otro dispositivo ha
-  // guardado algo desde la última vez que tú cargaste los datos.
-  const [dataStale, setDataStale] = useState(false);
-  const lastKnownChangeRef = useRef(0);
-
-  // Guarda qué fue lo último que falló al guardar (una ficha de coche o
-  // el índice general), para poder reintentarlo automáticamente en
-  // cuanto vuelva la conexión, en vez de dejar el aviso de error fijo.
-  const lastFailedRef = useRef(null);
+  const prevPendingRef = useRef(0);
 
   useEffect(() => {
     openIdRef.current = openId;
   }, [openId]);
+
+  // La lista de coches viene del motor local: aparece al instante con lo
+  // guardado en el móvil y se va actualizando sola cuando termina de
+  // sincronizar en segundo plano.
+  useEffect(() => {
+    const off = LocalFirst.onCars(setCars);
+    LocalFirst.boot({ pollMarker: FIREBASE_CONFIGURED }).then(() => setCars(LocalFirst.getCars()));
+    return off;
+  }, []);
+
+  // Aviso verde "Sincronizado" cuando se vacía la cola de pendientes.
+  useEffect(() => {
+    const was = prevPendingRef.current;
+    prevPendingRef.current = sync.pending;
+    if (was > 0 && sync.pending === 0) {
+      setShowSynced(true);
+      const t = setTimeout(() => setShowSynced(false), 1600);
+      return () => clearTimeout(t);
+    }
+  }, [sync.pending]);
 
   // Gestión del botón "atrás" del navegador/móvil:
   // - Si hay un vehículo abierto, "atrás" vuelve a la lista principal.
@@ -2072,148 +3196,16 @@ function App() {
     window.history.back();
   };
 
+  // Pull-to-refresh / botón de actualizar: descarga solo lo que ha cambiado.
+  const handleRefresh = useCallback(() => LocalFirst.syncNow().catch(() => {}), []);
+  const handleSyncFull = useCallback(() => LocalFirst.syncNow({ full: true }).catch(() => {}), []);
 
-  const loadData = async ({ silent } = {}) => {
-    if (!silent) {
-      setLoading(true);
-      setLoadError(null);
-    }
-    try {
-      const index = (await storageGet(CARS_INDEX_KEY)) || [];
-      const loaded = [];
-      for (const id of index) {
-        const c = await storageGet(carKey(id));
-        if (c) loaded.push(c);
-      }
-
-      const missingCodes = loaded
-        .filter((c) => !c.orderCode)
-        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-
-      if (missingCodes.length > 0) {
-        let lastNumber = (await storageGet(ORDER_COUNTER_KEY)) || 0;
-        for (const c of missingCodes) {
-          lastNumber += 1;
-          c.orderCode = `OT-${String(lastNumber).padStart(4, "0")}`;
-          await storageSet(carKey(c.id), c);
-        }
-        await storageSet(ORDER_COUNTER_KEY, lastNumber);
-      }
-
-      setCars(loaded);
-      try {
-        lastKnownChangeRef.current = (await storageGet(CHANGE_MARKER_KEY)) || Date.now();
-      } catch {
-        lastKnownChangeRef.current = Date.now();
-      }
-      setDataStale(false);
-      if (!silent) setLoading(false);
-    } catch (err) {
-      console.error("Error cargando datos:", err);
-      if (silent) {
-        setSaveStatus("error");
-        setSaveError((err && err.message) || String(err));
-      } else {
-        setLoadError((err && err.message) || String(err));
-        setLoading(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // Cada cierto tiempo comprueba si otro dispositivo ha guardado algo
-  // que tú todavía no tienes cargado, y si es así activa el aviso en
-  // el botón de recarga (sin recargar solo, para no interrumpir si
-  // estás escribiendo algo).
-  useEffect(() => {
-    if (!FIREBASE_CONFIGURED) return;
-    const interval = setInterval(async () => {
-      try {
-        const marker = (await storageGet(CHANGE_MARKER_KEY)) || 0;
-        if (marker > lastKnownChangeRef.current) setDataStale(true);
-      } catch {
-        // Sin conexión de momento: no pasa nada, se reintentará solo.
-      }
-    }, 20000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const bumpChangeMarker = () => {
-    const now = Date.now();
-    lastKnownChangeRef.current = now;
-    // No esperamos esta escritura: es solo informativa para otros
-    // dispositivos y no debe frenar ni el guardado ni la interfaz.
-    storageSet(CHANGE_MARKER_KEY, now).catch(() => {});
-  };
-
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  const handleRefresh = useCallback(() => loadData({ silent: true }), []);
-
-  const persistIndex = async (list) => {
-    try {
-      await storageSet(
-        CARS_INDEX_KEY,
-        list.map((c) => c.id)
-      );
-      if (lastFailedRef.current?.type === "index") lastFailedRef.current = null;
-      bumpChangeMarker();
-    } catch (err) {
-      console.error("Error guardando índice:", err);
-      setSaveStatus("error");
-      setSaveError((err && err.message) || String(err));
-      lastFailedRef.current = { type: "index", list };
-    }
-  };
-
-  const saveCar = async (car) => {
-    setSaveStatus("saving");
-    try {
-      await storageSet(carKey(car.id), car);
-      setSaveStatus("saved");
-      setSaveError(null);
-      if (lastFailedRef.current?.type === "car") lastFailedRef.current = null;
-      bumpChangeMarker();
-      setTimeout(() => setSaveStatus("idle"), 1200);
-    } catch (err) {
-      console.error("Error guardando coche:", err);
-      setSaveStatus("error");
-      setSaveError((err && err.message) || String(err));
-      lastFailedRef.current = { type: "car", car };
-    }
-  };
-
-  // En cuanto el dispositivo recupera la conexión, si se había quedado
-  // algo sin guardar, lo reintenta solo, para no dejar el aviso de
-  // "Error al guardar" fijo en pantalla indefinidamente.
-  useEffect(() => {
-    const retryPending = () => {
-      const pending = lastFailedRef.current;
-      if (!pending) return;
-      if (pending.type === "car") saveCar(pending.car);
-      else if (pending.type === "index") persistIndex(pending.list);
-    };
-    window.addEventListener("online", retryPending);
-    return () => window.removeEventListener("online", retryPending);
-  }, []);
-
-  const handleCreate = async () => {
-    let orderCode = "OT-0001";
-    try {
-      const lastNumber = (await storageGet(ORDER_COUNTER_KEY)) || 0;
-      const nextNumber = lastNumber + 1;
-      await storageSet(ORDER_COUNTER_KEY, nextNumber);
-      orderCode = `OT-${String(nextNumber).padStart(4, "0")}`;
-    } catch (err) {
-      console.error("Error generando el código de orden:", err);
-      orderCode = `OT-${uid()}`;
-    }
+  const handleCreate = () => {
+    // Se crea al instante en el móvil, sin esperar a Firebase. El código de
+    // orden (OT-xxxx) se asigna en cuanto hay conexión.
     const newCar = {
       id: uid(),
-      orderCode,
+      orderCode: "",
       brand: "",
       model: "",
       plate: "",
@@ -2232,52 +3224,72 @@ function App() {
       finishedAt: null,
       noted: false,
     };
-    const updated = [...cars, newCar];
-    setCars(updated);
+    setCars((prev) => [...prev.filter((c) => c.id !== newCar.id), newCar]);
     openCarDetail(newCar.id);
-    await saveCar(newCar);
-    await persistIndex(updated);
+    LocalFirst.createCarLocal(newCar).catch((err) => console.error("Error creando la orden:", err));
   };
 
-  const handleUpdateCar = async (updatedCar) => {
+  const handleUpdateCar = (updatedCar) => {
     setCars((prev) => prev.map((c) => (c.id === updatedCar.id ? updatedCar : c)));
-    await saveCar(updatedCar);
+    return LocalFirst.saveCarLocal(updatedCar).catch((err) => console.error("Error guardando en el móvil:", err));
   };
 
-  const handleDeleteCar = async (id) => {
-    const updated = cars.filter((c) => c.id !== id);
-    setCars(updated);
+  const handleDeleteCar = (id) => {
+    setCars((prev) => prev.filter((c) => c.id !== id));
     setOpenId(null);
-    await persistIndex(updated);
-    await storageDelete(carKey(id));
+    LocalFirst.deleteCarLocal(id).catch((err) => console.error("Error borrando:", err));
   };
 
-  const handleDeleteMultiple = async (ids) => {
+  const handleDeleteMultiple = (ids) => {
     const idSet = new Set(ids);
-    const updated = cars.filter((c) => !idSet.has(c.id));
-    setCars(updated);
+    setCars((prev) => prev.filter((c) => !idSet.has(c.id)));
     if (openId && idSet.has(openId)) setOpenId(null);
-    await persistIndex(updated);
-    await Promise.all(ids.map((id) => storageDelete(carKey(id))));
+    ids.forEach((id) => LocalFirst.deleteCarLocal(id).catch((err) => console.error("Error borrando:", err)));
   };
 
-  if (loading) {
+  const handleMigrate = async () => {
+    const n = LocalFirst.countLegacyPhotos(cars);
+    const ok = window.confirm(
+      `Se van a optimizar ${n} fotos antiguas: cada foto se guardará por separado en Firebase y la lista cargará mucho más rápido.\n\n` +
+        "Hazlo con buena conexión (wifi) y cuando nadie más esté editando coches. Puede tardar unos minutos.\n\n¿Continuar?"
+    );
+    if (!ok) return;
+    setMigration({ done: 0, total: 0 });
+    try {
+      await LocalFirst.migrateLegacy((done, total) => setMigration({ done, total }));
+    } catch (err) {
+      window.alert("No se pudo completar la optimización: " + ((err && err.message) || err));
+    } finally {
+      setMigration(null);
+    }
+  };
+
+  const retryAll = () => {
+    LocalFirst.retryNow();
+    LocalFirst.syncNow().catch(() => {});
+  };
+
+  /* ---- pantallas de carga inicial (solo la primera vez en este móvil) ---- */
+  const firstLoad = sync.ready && !sync.hasSynced && cars.length === 0;
+  if (!sync.ready || (firstLoad && !sync.lastError)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-100">
-        <p className="text-black text-sm font-medium uppercase">Cargando taller...</p>
+        <p className="text-black text-sm font-medium uppercase">
+          {sync.progress ? `Cargando taller... ${sync.progress.done}/${sync.progress.total}` : "Cargando taller..."}
+        </p>
       </div>
     );
   }
 
-  if (loadError) {
+  if (firstLoad && sync.lastError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-100 px-6">
         <div className="max-w-sm w-full bg-white border border-red-200 rounded-xl p-5 text-center">
           <AlertCircle className="mx-auto text-red-500 mb-2" size={28} />
           <p className="text-stone-700 font-medium mb-1">No se pudieron cargar los datos</p>
-          <p className="text-sm text-black break-words mb-4">{loadError}</p>
+          <p className="text-sm text-black break-words mb-4">{sync.lastError}</p>
           <button
-            onClick={loadData}
+            onClick={() => LocalFirst.syncNow({ full: true }).catch(() => {})}
             className="w-full bg-amber-500 text-white text-sm font-medium py-2 rounded-lg hover:bg-amber-600 transition"
           >
             Reintentar
@@ -2285,6 +3297,24 @@ function App() {
         </div>
       </div>
     );
+  }
+
+  /* ---- aviso de estado de la sincronización ---- */
+  let pill = null;
+  const plural = (n) => `${n} ${n === 1 ? "cambio" : "cambios"}`;
+  if (sync.pending > 0) {
+    const warn = sync.degraded ? " · ⚠ sin copia segura en el móvil" : "";
+    if (sync.permFailed > 0) {
+      pill = { tone: "error", text: `No se pudo subir: ${sync.permError} · Toca para reintentar` };
+    } else if (!sync.online) {
+      pill = { tone: "warn", text: `Sin conexión · ${plural(sync.pending)} guardado(s) en este móvil${warn}` };
+    } else if (sync.pushing) {
+      pill = { tone: "info", text: `Subiendo… (${sync.pending})${warn}` };
+    } else {
+      pill = { tone: "warn", text: `Guardado en este móvil · ${plural(sync.pending)} sin subir · toca para reintentar${warn}` };
+    }
+  } else if (showSynced) {
+    pill = { tone: "ok", text: "Sincronizado" };
   }
 
   const openCar = cars.find((c) => c.id === openId);
@@ -2304,7 +3334,7 @@ function App() {
           onOpen={openCarDetail}
           onCreate={handleCreate}
           onRefresh={handleRefresh}
-          dataStale={dataStale}
+          dataStale={sync.stale}
           filter={filter}
           setFilter={setFilter}
           onOpenSidebar={() => setSidebarOpen(true)}
@@ -2320,44 +3350,42 @@ function App() {
           setSidebarOpen(false);
           openCarDetail(id);
         }}
+        sync={sync}
+        legacyCount={LocalFirst.countLegacyPhotos(cars)}
+        migration={migration}
+        onSyncFull={handleSyncFull}
+        onMigrate={handleMigrate}
       />
 
-      {saveStatus !== "idle" && (
+      {pill && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[92vw]">
           <div
             onClick={() => {
-              if (saveStatus !== "error") return;
-              const pending = lastFailedRef.current;
-              if (!pending) return;
-              if (pending.type === "car") saveCar(pending.car);
-              else if (pending.type === "index") persistIndex(pending.list);
+              if (pill.tone !== "ok") retryAll();
             }}
             className={`text-xs font-medium px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 ${
-              saveStatus === "saving"
+              pill.tone === "info"
                 ? "bg-stone-800 text-white"
-                : saveStatus === "error"
+                : pill.tone === "warn"
+                ? "bg-amber-600 text-white cursor-pointer"
+                : pill.tone === "error"
                 ? "bg-red-600 text-white cursor-pointer"
                 : "bg-green-600 text-white"
             }`}
           >
-            {saveStatus === "saving" && <>Guardando...</>}
-            {saveStatus === "saved" && (
-              <>
-                <Check size={12} /> Guardado
-              </>
-            )}
-            {saveStatus === "error" && (
-              <>
-                <AlertCircle size={12} className="flex-shrink-0" />
-                <span className="truncate">Error al guardar: {saveError} · Toca para reintentar</span>
-              </>
-            )}
+            {pill.tone === "ok" && <Check size={12} />}
+            {pill.tone === "error" && <AlertCircle size={12} className="flex-shrink-0" />}
+            <span className="truncate">{pill.text}</span>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+// El motor arranca YA (lee lo guardado en el móvil y empieza a sincronizar)
+// mientras el mecánico escribe la contraseña, en vez de esperar a después.
+LocalFirst.boot({ pollMarker: FIREBASE_CONFIGURED });
 
 const root = createRoot(document.getElementById("root"));
 root.render(
