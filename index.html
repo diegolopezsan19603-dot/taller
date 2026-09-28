@@ -268,8 +268,16 @@ function withTimeout(promise, ms = SAVE_TIMEOUT_MS, message = "Sin respuesta del
 --------------------------------------------------------- */
 const PHOTO_MAX_DIM = 1000;
 const PHOTO_QUALITY = 0.7;
-const THUMB_MAX_DIM = 360;
-const THUMB_QUALITY = 0.6;
+// Miniatura (la que se ve en la lista y en la galería de la ficha).
+// Antes 360 px / 0.60; ahora 600 px / 0.78. Pesa unas 3-4 veces más, pero
+// sigue siendo pequeña. THUMB_VERSION marca qué miniaturas ya tienen la
+// resolución nueva (las antiguas se pueden mejorar desde el panel lateral).
+const THUMB_MAX_DIM = 600;
+const THUMB_QUALITY = 0.78;
+const THUMB_VERSION = 2;
+// Firestore admite 1 MiB por documento: no se mejora una ficha si con las
+// miniaturas nuevas se acercara a ese límite.
+const MAX_CAR_DOC_BYTES = 900000;
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -702,7 +710,7 @@ const LocalFirst = (() => {
         await savePhotoLocal(p.id, p.data);
         migrated.set(p.id, thumb);
       }
-      return { id: p.id, thumb };
+      return { id: p.id, thumb, v: THUMB_VERSION };
     };
     const photos = await Promise.all((car.photos || []).map(migrateOne));
     const clientPhotos = await Promise.all((car.clientPhotos || []).map(migrateOne));
@@ -710,6 +718,68 @@ const LocalFirst = (() => {
       (car.parts || []).map(async (pt) => (pt && pt.photo ? { ...pt, photo: await migrateOne(pt.photo) } : pt))
     );
     return { ...car, photos, clientPhotos, parts };
+  }
+
+  /* ---- mejora de miniaturas ya subidas ---- */
+  const mapCarPhotos = (car, fn) => ({
+    ...car,
+    photos: (car.photos || []).map(fn),
+    clientPhotos: (car.clientPhotos || []).map(fn),
+    parts: (car.parts || []).map((pt) => (pt && pt.photo ? { ...pt, photo: fn(pt.photo) } : pt)),
+  });
+  const isOldThumb = (p) => !!(p && p.id && p.thumb && !p.data && (p.v || 0) < THUMB_VERSION);
+  function oldThumbsOf(car) {
+    let n = 0;
+    mapCarPhotos(car, (p) => {
+      if (isOldThumb(p)) n++;
+      return p;
+    });
+    return n;
+  }
+  const countOldThumbs = (list) => list.reduce((sum, c) => sum + oldThumbsOf(c), 0);
+
+  // Vuelve a generar las miniaturas a partir de la foto completa (1000 px),
+  // que está en el móvil o en Firebase. No hace falta volver a subir la foto.
+  async function upgradeThumbs(onProgress) {
+    await syncNow({ full: true }); // primero se baja lo último, para no pisar cambios de otros
+    const targets = getCars().filter((c) => oldThumbsOf(c) > 0);
+    let upgraded = 0;
+    let skipped = 0;
+    let failed = 0;
+    let done = 0;
+    for (const c of targets) {
+      const updates = new Map();
+      const todo = [];
+      mapCarPhotos(c, (p) => {
+        if (isOldThumb(p)) todo.push(p);
+        return p;
+      });
+      await Promise.all(
+        todo.map(async (p) => {
+          try {
+            const full = await getFullPhoto(p.id);
+            if (!full) return void failed++;
+            updates.set(p.id, { thumb: await makeThumb(full), v: THUMB_VERSION });
+          } catch {
+            failed++;
+          }
+        })
+      );
+      // Se aplica sobre la versión ACTUAL de la ficha (por si se editó mientras tanto).
+      const current = cars.get(c.id);
+      if (current && updates.size > 0) {
+        const next = mapCarPhotos(current, (p) => (p && updates.has(p.id) ? { ...p, ...updates.get(p.id) } : p));
+        if (JSON.stringify(next).length > MAX_CAR_DOC_BYTES) skipped += updates.size;
+        else {
+          await saveCarLocal(next);
+          upgraded += updates.size;
+        }
+      }
+      done++;
+      if (onProgress) onProgress(done, targets.length);
+    }
+    flush().catch(() => {});
+    return { upgraded, skipped, failed };
   }
 
   /* ---- operaciones locales (lo que usa la interfaz) ---- */
@@ -1224,7 +1294,7 @@ const LocalFirst = (() => {
     getCars, getState, subscribe, onCars,
     saveCarLocal, createCarLocal, deleteCarLocal,
     savePhotoLocal, getFullPhoto,
-    syncNow, flush, retryNow, migrateLegacy, countLegacyPhotos,
+    syncNow, flush, retryNow, migrateLegacy, countLegacyPhotos, upgradeThumbs, countOldThumbs,
   };
 })();
 // </engine>
@@ -1351,7 +1421,7 @@ function PhotoPicker({ onPick, label = "Añadir foto", small }) {
       await LocalFirst.savePhotoLocal(id, data);
       // 2) Se entrega a la ficha; la subida a Firebase va en segundo plano
       //    y se reintenta sola hasta que el servidor la confirme.
-      onPick({ id, thumb });
+      onPick({ id, thumb, v: THUMB_VERSION });
     } catch (err) {
       console.error("No se pudo procesar la foto:", err);
       window.alert("No se pudo procesar la foto. Inténtalo de nuevo.");
@@ -2886,7 +2956,7 @@ function CarListScreen({
    Barra lateral: historial de trabajos completados y
    recordatorio de piezas pendientes de pedir/recibir
 --------------------------------------------------------- */
-function WorkshopSidebar({ open, onClose, cars, onOpenCar, sync, legacyCount, migration, onSyncFull, onMigrate }) {
+function WorkshopSidebar({ open, onClose, cars, onOpenCar, sync, legacyCount, migration, onSyncFull, onMigrate, oldThumbCount, thumbUpgrade, onUpgradeThumbs }) {
   const completed = cars
     .filter((c) => c.status === "terminado" && c.finishedAt)
     .sort((a, b) => b.finishedAt - a.finishedAt);
@@ -3043,6 +3113,17 @@ function WorkshopSidebar({ open, onClose, cars, onOpenCar, sync, legacyCount, mi
                 >
                   Sincronizar todo ahora
                 </button>
+                {oldThumbCount > 0 && (
+                  <button
+                    onClick={onUpgradeThumbs}
+                    disabled={!!thumbUpgrade}
+                    className="w-full py-2.5 rounded-lg bg-amber-600 text-white text-sm font-bold uppercase disabled:opacity-60 active:scale-[0.99] transition"
+                  >
+                    {thumbUpgrade
+                      ? `Mejorando… ${thumbUpgrade.done}/${thumbUpgrade.total}`
+                      : `Mejorar calidad de ${oldThumbCount} vistas previas`}
+                  </button>
+                )}
                 {legacyCount > 0 && (
                   <button
                     onClick={onMigrate}
@@ -3143,6 +3224,7 @@ function App() {
   const [filter, setFilter] = useState("pendiente");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [migration, setMigration] = useState(null);
+  const [thumbUpgrade, setThumbUpgrade] = useState(null);
   const [showSynced, setShowSynced] = useState(false);
   const openIdRef = useRef(openId);
   const prevPendingRef = useRef(0);
@@ -3264,6 +3346,27 @@ function App() {
     }
   };
 
+  const handleUpgradeThumbs = async () => {
+    const n = LocalFirst.countOldThumbs(cars);
+    const ok = window.confirm(
+      `Se va a mejorar la calidad de ${n} vistas previas ya subidas. Se regeneran a partir de la foto completa (no se pierde nada y no hace falta volver a subir las fotos).\n\n` +
+        "Hazlo con buena conexión (wifi) y cuando nadie más esté editando coches. Puede tardar unos minutos.\n\n¿Continuar?"
+    );
+    if (!ok) return;
+    setThumbUpgrade({ done: 0, total: 0 });
+    try {
+      const r = await LocalFirst.upgradeThumbs((done, total) => setThumbUpgrade({ done, total }));
+      let msg = `Listo: ${r.upgraded} vistas previas mejoradas.`;
+      if (r.skipped > 0) msg += `\n${r.skipped} se han dejado como estaban porque esas órdenes tienen muchas fotos y no caben con mayor calidad.`;
+      if (r.failed > 0) msg += `\n${r.failed} no se pudieron procesar (foto no disponible); vuelve a intentarlo con mejor conexión.`;
+      window.alert(msg);
+    } catch (err) {
+      window.alert("No se pudo completar la mejora: " + ((err && err.message) || err));
+    } finally {
+      setThumbUpgrade(null);
+    }
+  };
+
   const retryAll = () => {
     LocalFirst.retryNow();
     LocalFirst.syncNow().catch(() => {});
@@ -3355,6 +3458,9 @@ function App() {
         migration={migration}
         onSyncFull={handleSyncFull}
         onMigrate={handleMigrate}
+        oldThumbCount={LocalFirst.countOldThumbs(cars)}
+        thumbUpgrade={thumbUpgrade}
+        onUpgradeThumbs={handleUpgradeThumbs}
       />
 
       {pill && (
